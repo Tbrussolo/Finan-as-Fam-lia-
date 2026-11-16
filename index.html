@@ -390,7 +390,7 @@ function renderFluxo(wb){
     const nomes = contas.map(c => norm(c.nome));
     let total = 0, pendente = false;
     const linhasC = contas.map(c => {
-      const mov = lanc.filter(l => norm(l.conta)===norm(c.nome) && c.data && l.d > c.data);
+      const mov = lanc.filter(l => norm(l.conta)===norm(c.nome) && c.data && l.d > c.data && l.d <= hoje);
       const m = soma(mov.map(l => l.v));
       const ult = mov.length ? new Date(Math.max(...mov.map(l => l.d.getTime()))) : null;
       if (c.saldo === null || !c.data){ pendente = true;
