@@ -55,6 +55,7 @@
   table.orc tr.tot td{font-weight:bold}
   table.orc tr.sub td{color:var(--muted);font-size:.82rem}
   table.fluxo tr.sub td{color:var(--muted);font-size:.82rem}
+  .tg{cursor:pointer;user-select:none}
   .btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;font-size:.85rem;cursor:pointer}
   details.hist{margin:24px 0}
   details.hist summary{cursor:pointer;color:var(--muted);font-size:.9rem;margin-bottom:12px}
@@ -78,6 +79,7 @@
 
   <div id="fluxo-wrap">
     <button id="baixar" class="btn">Baixar lançamentos já registrados (.xlsx)</button>
+    <button id="det-btn" class="btn">Abrir detalhamento</button>
     <h2 style="font-size:1.1rem;margin:16px 0 12px">Saldo das contas</h2>
     <div class="wrap" id="contas-tab"></div>
     <p class="legend">Saldo atual = saldo inicial + lançamentos com data depois da data do saldo. Pagamentos de fatura e transferências entram aqui como "Movimento de conta".</p>
@@ -292,12 +294,23 @@ function renderFluxo(wb){
       ['&nbsp;&nbsp;Outros', A.outros, 'sub', 'e'],
       ['Dízimos e Ofertas (igreja)', A.ig, '', 's'],
       ['Resultado líquido', A.rec - A.ig, 'tot', 'e'],
-      ...grupos.flatMap(x => [[x, A.g[x], '', 's'],
-        ...DET.map((d,j) => d.grupo===x ? ['&nbsp;&nbsp;'+d.nome, A.det[j], 'sub', 's', true] : null).filter(Boolean)]),
+      ...grupos.flatMap(x => {
+        const ds = DET.map((d,j) => d.grupo===x ? ['&nbsp;&nbsp;'+d.nome, A.det[j], 'sub', 's', true, x] : null).filter(Boolean);
+        return [[x, A.g[x], '', 's', false, ds.length ? x : ''], ...ds];
+      }),
       ...(comFora ? [['Outros (real, grupo fora da lista)', A.fora, '', 's']] : []),
       ['Total despesas', desp, 'tot', 's'],
       ['Resultado do mês', A.rec - A.ig - desp, 'tot', 'e'],
     ];
+  }
+  // detalhes (parcelas e linhas de dívida) fechados por padrão; clique no grupo ou no botão para abrir
+  const abertos = new Set();
+  const gruposComDet = grupos.filter(x => DET.some(d => d.grupo===x));
+  const nomeCel = (l) => (!l[4] && l[5]) ? `<span class="tg" data-g="${l[5]}">${abertos.has(l[5]) ? '▾' : '▸'} ${l[0]}</span>` : l[0];
+  const oculta = l => l[4] && !abertos.has(l[5]);
+  function atualizaBotao(){
+    const b = document.getElementById('det-btn');
+    if (b) b.textContent = abertos.size ? 'Fechar detalhamento' : 'Abrir detalhamento';
   }
   const cel = v => (v===0 ? '—' : fmt(v));
   const ruim = (t, cls, o, r) => t==='s' && (o ? r>o : r>0);
@@ -322,11 +335,11 @@ function renderFluxo(wb){
     const head = `<thead><tr><th class="c1">Categoria</th><th class="c2">Orçado</th><th class="c3">Realizado</th>${dias}</tr></thead>`;
     const keep = k => !O[k][4] || O[k][1]!==0 || R[k][1]!==0 || D.some(d => d[k][1]!==0);
     const body = O.map(([n,o,cls,t], k) => {
-      if (!keep(k)) return '';
+      if (!keep(k) || oculta(O[k])) return '';
       const r = R[k][1];
       const vermelho = ruim(t, cls, o, r) ? 'over' : '';
       const dcells = D.map(d => `<td class="dia ${d[k][1]<0?'over':''}">${cel(d[k][1])}</td>`).join('');
-      return `<tr class="${cls}"><td class="c1">${n}</td><td class="c2">${cel(o)}</td>` +
+      return `<tr class="${cls}"><td class="c1">${nomeCel(O[k])}</td><td class="c2">${cel(o)}</td>` +
         `<td class="c3 ${vermelho || (k===O.length-1 && r<0 ? 'over':'')}">${cel(r)}</td>${dcells}</tr>`;
     }).join('');
     const rowPass = pass.length
@@ -349,7 +362,7 @@ function renderFluxo(wb){
       `<th colspan="${c.tem?2:1}" class="mhead">${c.m}</th>`).join('') + '</tr>';
     const head2 = '<tr>' + cols.map(c => c.tem ? '<th>Orçado</th><th>Realizado</th>' : '<th>Orçado</th>').join('') + '</tr>';
     const keepG = k => !O[0][k][4] || cols.some((c,ci) => O[ci][k][1]!==0 || (R[ci] && R[ci][k][1]!==0));
-    const linhasHtml = O[0].map(([nome,,cls,t], k) => !keepG(k) ? '' : '<tr class="'+cls+'"><td class="c1">'+nome+'</td>' + cols.map((c,ci) => {
+    const linhasHtml = O[0].map(([nome,,cls,t], k) => (!keepG(k) || oculta(O[0][k])) ? '' : '<tr class="'+cls+'"><td class="c1">'+nomeCel(O[0][k])+'</td>' + cols.map((c,ci) => {
       const o = O[ci][k][1];
       let s = `<td>${cel(o)}</td>`;
       if (c.tem){ const r = R[ci][k][1]; s += `<td class="${ruim(t,cls,o,r)?'over':''}">${cel(r)}</td>`; }
@@ -412,6 +425,14 @@ function renderFluxo(wb){
     if (wb.Sheets['Passivos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Passivos'], 'Passivos');
     XLSX.writeFile(nb, 'lancamentos_registrados.xlsx');
   };
+  const refaz = () => { visaoMes(); geral(); atualizaBotao(); };
+  document.addEventListener('click', e => {
+    const t = e.target.closest && e.target.closest('.tg');
+    if (!t) return;
+    const g = t.dataset.g; abertos.has(g) ? abertos.delete(g) : abertos.add(g); refaz();
+  });
+  const dbtn = document.getElementById('det-btn');
+  if (dbtn) dbtn.onclick = () => { if (abertos.size) abertos.clear(); else gruposComDet.forEach(g => abertos.add(g)); refaz(); };
   selOrc.onchange = visaoMes;
   visaoMes(); geral(); blocoPassivos(); saldoContas();
 }
