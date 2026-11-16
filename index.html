@@ -78,7 +78,11 @@
 
   <div id="fluxo-wrap">
     <button id="baixar" class="btn">Baixar lançamentos já registrados (.xlsx)</button>
-    <h2 style="font-size:1.1rem;margin:12px 0 12px">Orçamento x Realizado no mês</h2>
+    <h2 style="font-size:1.1rem;margin:16px 0 12px">Saldo das contas</h2>
+    <div class="wrap" id="contas-tab"></div>
+    <p class="legend">Saldo atual = saldo inicial + lançamentos com data depois da data do saldo. Pagamentos de fatura e transferências entram aqui como "Movimento de conta".</p>
+
+    <h2 style="font-size:1.1rem;margin:24px 0 12px">Orçamento x Realizado no mês</h2>
     <label class="seletor">Mês: <select id="mes-orc"></select></label>
     <div class="wrap"><table id="mes-tab" class="orc2"></table></div>
     <p class="legend">Orçado e Realizado ficam fixos; role para a direita para ver o dia a dia. Realizado em vermelho = passou do orçamento. O realizado vem da aba Lancamentos.</p>
@@ -226,11 +230,12 @@ function renderFluxo(wb){
     const li = rl.findIndex(r => r && r[0] === 'Data');
     if (li >= 0) rl.slice(li+1).forEach(r => {
       const d = parseData(r[0]); const v = typeof r[4] === 'number' ? r[4] : null;
-      if (d && v !== null) lanc.push({d, desc:r[1]||'', grupo:r[2]||'Sem grupo', sub:r[3]||'', v});
+      if (d && v !== null) lanc.push({d, desc:r[1]||'', grupo:r[2]||'Sem grupo', sub:r[3]||'', v, conta:r[5]||'', tipo:r[6]||''});
     });
   }
   const realPorMes = {};
-  lanc.forEach(l => (realPorMes[mesKey(l.d)] = realPorMes[mesKey(l.d)] || []).push(l));
+  // "Movimento de conta" (pagamento de fatura, transferência) conta só no saldo das contas, não no orçamento
+  lanc.filter(l => !/movimento/i.test(l.tipo)).forEach(l => (realPorMes[mesKey(l.d)] = realPorMes[mesKey(l.d)] || []).push(l));
 
   // escola: valor atual (meio-período); só muda se o custo da escola mudar
   const linhasOrc = base.filter(r => r.cen === '' || r.cen === 'meio');
@@ -367,6 +372,35 @@ function renderFluxo(wb){
       pass.map(p => `<tr><td style="text-align:left">${p.mes}</td><td style="text-align:left">${p.credor}</td><td style="text-align:left">${p.desc}</td><td>${fmt(p.valor)}</td><td>${p.data||'—'}</td><td style="text-align:left;white-space:normal;min-width:220px">${p.nota||'—'}</td><td>${p.quitado?'Quitado':'Em aberto'}</td></tr>`).join('') +
       `<tr class="tot"><td colspan="3" style="text-align:left">Total em aberto</td><td>${fmt(soma(ab.map(p=>p.valor)))}</td><td colspan="3"></td></tr></tbody></table>`;
   }
+  // ---------- saldo das contas ----------
+  function saldoContas(){
+    const el = document.getElementById('contas-tab');
+    const wsC = wb.Sheets['Contas'];
+    if (!wsC){ el.innerHTML = ''; return; }
+    const rc = XLSX.utils.sheet_to_json(wsC, {header:1, raw:true});
+    const ci = rc.findIndex(r => r && r[0] === 'Conta');
+    const contas = ci < 0 ? [] : rc.slice(ci+1).filter(r => r && r[0]).map(r => ({
+      nome:String(r[0]), saldo: typeof r[1]==='number' ? r[1] : null, data: parseData(r[2]),
+      obs:r[3]||'', extrato: typeof r[4]==='number' ? r[4] : null}));
+    const dd = d => d ? `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` : '—';
+    const nomes = contas.map(c => norm(c.nome));
+    let total = 0, pendente = false;
+    const linhasC = contas.map(c => {
+      const mov = lanc.filter(l => norm(l.conta)===norm(c.nome) && c.data && l.d > c.data);
+      const m = soma(mov.map(l => l.v));
+      const ult = mov.length ? new Date(Math.max(...mov.map(l => l.d.getTime()))) : null;
+      if (c.saldo === null || !c.data){ pendente = true;
+        return `<tr><td style="text-align:left">${c.nome}</td><td>—</td><td>—</td><td>—</td><td class="over">informar saldo</td><td>—</td><td style="text-align:left;white-space:normal;min-width:240px">${c.obs}</td></tr>`; }
+      const atual = c.saldo + m; total += atual;
+      const dif = c.extrato !== null ? atual - c.extrato : null;
+      return `<tr><td style="text-align:left">${c.nome}</td><td>${fmt(c.saldo)}</td><td>${dd(c.data)}</td><td>${m===0?'—':fmt(m)}</td>` +
+        `<td class="${atual<0?'over':''}"><b>${fmt(atual)}</b></td><td>${ult?dd(ult):'—'}</td><td style="text-align:left;white-space:normal;min-width:240px">${c.obs}${dif!==null?` | conferência: diferença ${fmt(dif)}`:''}</td></tr>`;
+    }).join('');
+    const semConta = lanc.filter(l => l.conta && !nomes.includes(norm(l.conta)));
+    el.innerHTML = '<table class="orc2"><thead><tr><th class="c0">Conta</th><th>Saldo inicial</th><th>Data do saldo</th><th>Movimentos depois</th><th>Saldo atual</th><th>Último lançamento</th><th class="c0">Observação</th></tr></thead><tbody>' +
+      linhasC + `<tr class="tot"><td style="text-align:left">Total${pendente?' (sem contas pendentes)':''}</td><td></td><td></td><td></td><td class="${total<0?'over':''}">${fmt(total)}</td><td></td><td></td></tr></tbody></table>` +
+      (semConta.length ? `<p class="legend over">Atenção: ${semConta.length} lançamento(s) com conta não cadastrada na aba Contas.</p>` : '');
+  }
   // baixa os lançamentos já registrados (para conferir contra os extratos e evitar duplicidade)
   document.getElementById('baixar').onclick = () => {
     const nb = XLSX.utils.book_new();
@@ -375,7 +409,7 @@ function renderFluxo(wb){
     XLSX.writeFile(nb, 'lancamentos_registrados.xlsx');
   };
   selOrc.onchange = visaoMes;
-  visaoMes(); geral(); blocoPassivos();
+  visaoMes(); geral(); blocoPassivos(); saldoContas();
 }
 
 function renderProjecao(wb){
