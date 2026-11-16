@@ -204,7 +204,7 @@ function renderFluxo(wb){
   if (wsP){
     const rp = XLSX.utils.sheet_to_json(wsP, {header:1, raw:true});
     const pi = rp.findIndex(r => r && r[0] === 'Item');
-    if (pi >= 0) rp.slice(pi+1).forEach(r => { if (r && r[0]) parc.push({nome:r[0], vals: meses.map((_,i) => +r[2+i]||0)}); });
+    if (pi >= 0) rp.slice(pi+1).forEach(r => { if (r && r[0]) parc.push({nome:r[0], grupo:r[2]||'', sub:r[3]||'', vals: meses.map((_,i) => +r[4+i]||0)}); });
   }
   // passivos em aberto (fora do fluxo)
   const pass = [];
@@ -253,16 +253,20 @@ function renderFluxo(wb){
   // detalhe de "Dívidas e empréstimos": cada linha e, dentro dos parcelamentos, cada item
   const DIV = 'Dívidas e empréstimos', PARC = 'Parcelamentos de cartão';
   const norm = s => String(s||'').trim().toLowerCase();
+  // parcelas com grupo consomem o orçamento desse grupo (não somam em Dívidas); sem grupo ficam em Dívidas
+  const parcSem = parc.filter(p => !p.grupo);
   const DET = [];
-  linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===DIV).forEach(r => {
-    DET.push({nome:r.linha, nivel:1, orc: i => r.vals[i], match: l => norm(l.sub)===norm(r.linha) || (r.linha===PARC && parc.some(p => norm(p.nome)===norm(l.sub)))});
-    if (r.linha === PARC) parc.forEach(p => DET.push({nome:p.nome, nivel:2, orc: i => p.vals[i], match: l => norm(l.sub)===norm(p.nome)}));
+  linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===DIV && r.linha!==PARC).forEach(r => {
+    DET.push({nome:r.linha, nivel:1, grupo:DIV, orc: i => r.vals[i], match: l => norm(l.sub)===norm(r.linha)});
   });
+  parc.forEach(p => DET.push({nome:p.nome + (p.sub ? ' ('+p.sub+')' : ''), nivel:1, grupo:p.grupo||DIV, orc: i => p.vals[i],
+    match: l => norm(l.sub)===norm(p.nome) || norm(l.desc).includes(norm(p.nome))}));
 
   // agregados do orçamento de um mês (índice i)
   function aggOrc(i){
     const ent = f => soma(linhasOrc.filter(r => r.tipo==='Entrada' && f(r)).map(r => r.vals[i]));
-    const sai = g => soma(linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===g).map(r => r.vals[i]));
+    const sai = g => soma(linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===g && r.linha!==PARC).map(r => r.vals[i]))
+                     + (g===DIV ? soma(parcSem.map(p => p.vals[i])) : 0);
     const rec = ent(()=>true), paula = ent(r => r.linha.includes('Paula')), thiago = ent(r => r.linha.includes('Thiago'));
     const g = {}; grupos.forEach(x => g[x] = sai(x));
     return {rec, paula, thiago, outros: rec-paula-thiago, ig: sai(IGREJA), g, fora: 0, det: DET.map(d => d.orc(i))};
@@ -276,7 +280,7 @@ function renderFluxo(wb){
     return {rec, paula, thiago, outros: rec-paula-thiago,
             ig: soma(ls.filter(l => l.v<0 && l.grupo===IGREJA).map(l => -l.v)), g,
             fora: soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v)),
-            det: DET.map(d => soma(ls.filter(l => l.v<0 && l.grupo===DIV && d.match(l)).map(l => -l.v)))};
+            det: DET.map(d => soma(ls.filter(l => l.v<0 && l.grupo===d.grupo && d.match(l)).map(l => -l.v)))};
   }
   // linhas da tabela na ordem definida; tipo: e = entrada, s = saída
   function linhas(A, comFora){
@@ -289,7 +293,7 @@ function renderFluxo(wb){
       ['Dízimos e Ofertas (igreja)', A.ig, '', 's'],
       ['Resultado líquido', A.rec - A.ig, 'tot', 'e'],
       ...grupos.flatMap(x => [[x, A.g[x], '', 's'],
-        ...(x===DIV ? DET.map((d,j) => [(d.nivel===2?'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;':'&nbsp;&nbsp;')+d.nome, A.det[j], 'sub', 's', true]) : [])]),
+        ...DET.map((d,j) => d.grupo===x ? ['&nbsp;&nbsp;'+d.nome, A.det[j], 'sub', 's', true] : null).filter(Boolean)]),
       ...(comFora ? [['Outros (real, grupo fora da lista)', A.fora, '', 's']] : []),
       ['Total despesas', desp, 'tot', 's'],
       ['Resultado do mês', A.rec - A.ig - desp, 'tot', 'e'],
