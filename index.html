@@ -52,6 +52,8 @@
   table.fluxo th{white-space:nowrap}
   table.fluxo td{white-space:nowrap}
   table.fluxo tr.tot td{font-weight:bold}
+  table.orc tr.tot td{font-weight:bold}
+  table.orc tr.sub td{color:var(--muted);font-size:.82rem}
   table.fluxo tr.sub td{color:var(--muted);font-size:.82rem}
   details.hist{margin:24px 0}
   details.hist summary{cursor:pointer;color:var(--muted);font-size:.9rem;margin-bottom:12px}
@@ -64,10 +66,16 @@
   <p id="status">Carregando dados…</p>
 
   <div id="fluxo-wrap">
-    <h2 style="font-size:1.1rem;margin:8px 0 12px">Fluxo de caixa — Nov/26 em diante</h2>
-    <label class="seletor">Cenário da escola:
-      <select id="cenario"><option value="meio">Meio-período</option><option value="integral">Integral</option></select>
-    </label>
+    <h2 style="font-size:1.1rem;margin:8px 0 12px">Orçamento do mês</h2>
+    <label class="seletor">Mês: <select id="mes-orc"></select></label>
+    <div class="wrap"><table id="orc-tab" class="orc"></table></div>
+
+    <h2 style="font-size:1.1rem;margin:8px 0 12px">Como está o mês: orçamento x realizado</h2>
+    <div class="kpis" id="mes-cards"></div>
+    <div class="wrap"><table id="real-tab" class="orc"></table></div>
+    <p class="legend">Realizado vem da aba Lancamentos. Diferença positiva = a favor (gastou menos ou recebeu mais que o orçamento). % usado em vermelho = passou do orçamento.</p>
+
+    <h2 style="font-size:1.1rem;margin:20px 0 12px">Fluxo de caixa — Nov/26 em diante</h2>
     <div class="wrap"><table id="fluxo-tab" class="fluxo"></table></div>
     <p class="legend">Meses futuros = orçamento mensal (sem datas). Meses marcados "real" usam os lançamentos com data. Saldo acumulado parte de zero em Nov/26.</p>
     <label class="seletor">Dia a dia — mês: <select id="mes-dia"></select></label>
@@ -80,7 +88,7 @@
     <div class="chart">
       <h2>Saldo acumulado projetado</h2>
       <div id="proj-chart"></div>
-      <p class="legend">Inclui a quitação do cartão BTG e da conta negativa em Nov/26 e o pagamento do empréstimo do amigo em Ago/29. Pendente de confirmação: salário da Paula (hoje zero), valores da escola e outras entradas.</p>
+      <p class="legend">Inclui a quitação do cartão BTG e da conta negativa em Nov/26 e o pagamento do empréstimo do amigo em Ago/29. Pendente de confirmação: salário da Paula (hoje zero) e outras entradas.</p>
     </div>
   </div>
 
@@ -201,7 +209,7 @@ function renderFluxo(wb){
   const realPorMes = {};
   lanc.forEach(l => (realPorMes[mesKey(l.d)] = realPorMes[mesKey(l.d)] || []).push(l));
 
-  const selCen = document.getElementById('cenario');
+  const selCen = {value:'meio'}; // escola: valor atual (meio-período); só muda se o custo da escola mudar
   const selMes = document.getElementById('mes-dia');
   selMes.innerHTML = meses.map(m => `<option value="${m}">${m}${realPorMes[m]?' (real)':''}</option>`).join('');
   const primeiroReal = meses.find(m => realPorMes[m]);
@@ -273,8 +281,95 @@ function renderFluxo(wb){
     el.innerHTML = '<table><thead><tr><th>Data</th><th>Descrição</th><th>Grupo</th><th>Valor</th><th>Saldo do mês</th></tr></thead><tbody>' +
       ls.map(l => { ac += l.v; return `<tr><td>${String(l.d.getDate()).padStart(2,'0')}/${String(l.d.getMonth()+1).padStart(2,'0')}</td><td style="text-align:left">${l.desc}</td><td style="text-align:left">${l.grupo}</td><td class="${l.v<0?'over':'under'}">${fmt(l.v)}</td><td class="${ac<0?'over':''}">${fmt(ac)}</td></tr>`; }).join('') + '</tbody></table>';
   }
-  selCen.onchange = tabela; selMes.onchange = dia;
-  tabela(); dia();
+  // ---- Orçamento do mês e Orçamento x Realizado (mês em andamento) ----
+  const selOrc = document.getElementById('mes-orc');
+  const hoje = new Date();
+  selOrc.innerHTML = meses.map(m => `<option value="${m}">${m}${realPorMes[m]?' (com realizado)':''}</option>`).join('');
+  selOrc.value = meses.includes(mesKey(hoje)) ? mesKey(hoje) : (primeiroReal || meses[0]);
+  const ORDEM2 = ['Moradia','Alimentação','Educação','Transporte','Contas fixas','Saúde',
+                  'Despesas pessoais','Lazer','Reserva de emergência/metas curtas'];
+
+  function orcamentoRealizado(){
+    const m = selOrc.value, i = meses.indexOf(m);
+    const cen = selCen.value;
+    const linhas = base.filter(r => r.cen === '' || r.cen === cen);
+    const soma = a => a.reduce((s,v)=>s+v,0);
+    const ls = (realPorMes[m]||[]);
+    const ultimo = ls.length ? new Date(Math.max(...ls.map(l => l.d.getTime()))) : null;
+    const ano = 2000 + (+m.slice(4)), mi = MN.indexOf(m.slice(0,3));
+    const diasMes = new Date(ano, mi+1, 0).getDate();
+    const fim = new Date(ano, mi, diasMes, 23, 59);
+    const fechado = hoje > fim;
+    const dias = fechado ? diasMes : (ultimo ? ultimo.getDate() : 0);
+    const pctMes = Math.round(dias / diasMes * 100);
+
+    const oEnt = f => soma(linhas.filter(r => r.tipo==='Entrada' && f(r)).map(r => r.vals[i]));
+    const oSai = g => soma(linhas.filter(r => r.tipo==='Saída' && r.grupo===g).map(r => r.vals[i]));
+    const rEnt = f => soma(ls.filter(l => l.v>0 && f(l)).map(l => l.v));
+    const rSai = g => soma(ls.filter(l => l.v<0 && l.grupo===g).map(l => -l.v));
+    const sub = n => l => (l.sub||'').toLowerCase()===n.toLowerCase();
+    const IGREJA = 'Igreja';
+    const presentes = [...new Set(linhas.filter(r => r.tipo==='Saída').map(r => r.grupo))];
+    const resto = presentes.filter(g => g!==IGREJA && !ORDEM2.includes(g)).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    const grupos = [...ORDEM2, ...resto];
+    const conhecidos = [IGREJA, ...grupos];
+
+    const oRec = oEnt(()=>true), rRec = rEnt(()=>true);
+    const oPaula = oEnt(r => r.linha.includes('Paula')), rPaula = rEnt(sub('Paula'));
+    const oThiago = oEnt(r => r.linha.includes('Thiago')), rThiago = rEnt(sub('Thiago'));
+    const oIg = oSai(IGREJA), rIg = rSai(IGREJA);
+    const oDesp = soma(grupos.map(oSai));
+    const rOutros = soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v));
+    const rDesp = soma(grupos.map(rSai)) + rOutros;
+
+    // tipo: 'e' = entrada (quanto mais, melhor), 's' = saída (quanto menos, melhor)
+    const L = [
+      ['Receitas', oRec, rRec, 'e', 'tot'],
+      ['&nbsp;&nbsp;Paula', oPaula, rPaula, 'e', 'sub'],
+      ['&nbsp;&nbsp;Thiago', oThiago, rThiago, 'e', 'sub'],
+      ['&nbsp;&nbsp;Outros', oRec-oPaula-oThiago, rRec-rPaula-rThiago, 'e', 'sub'],
+      ['Dízimos e Ofertas (igreja)', oIg, rIg, 's', ''],
+      ['Resultado líquido', oRec-oIg, rRec-rIg, 'e', 'tot'],
+      ...grupos.map(g => [g, oSai(g), rSai(g), 's', '']),
+      ...(rOutros>0 ? [['Outros (real, grupo fora da lista)', 0, rOutros, 's', '']] : []),
+      ['Total despesas', oDesp, rDesp, 's', 'tot'],
+      ['Resultado do mês', oRec-oIg-oDesp, rRec-rIg-rDesp, 'e', 'tot'],
+    ];
+
+    const temReal = ls.length > 0;
+    // visão geral do orçamento
+    document.getElementById('orc-tab').innerHTML =
+      '<thead><tr><th>Categoria</th><th>Orçamento</th><th>% da receita</th></tr></thead><tbody>' +
+      L.map(([n,o,,,cls]) => `<tr class="${cls}"><td>${n}</td><td class="${o<0?'over':''}">${o===0?'—':fmt(o)}</td><td>${oRec&&o&&cls!=='sub'&&n!=='Receitas'?Math.round(Math.abs(o)/oRec*100)+'%':''}</td></tr>`).join('') + '</tbody>';
+
+    // cards: como está caminhando
+    const cards = document.getElementById('mes-cards');
+    if (!temReal){
+      cards.innerHTML = `<div class="kpi"><div class="label">${m}</div><div class="value">Sem realizado</div></div>`;
+    } else {
+      const ref = fechado ? 'mês fechado' : `dados até ${String(ultimo.getDate()).padStart(2,'0')}/${String(ultimo.getMonth()+1).padStart(2,'0')} (dia ${dias} de ${diasMes})`;
+      const uso = oDesp ? Math.round(rDesp/oDesp*100) : 0;
+      cards.innerHTML = `
+        <div class="kpi"><div class="label">${m} — ${ref}</div><div class="value">${pctMes}% do mês</div></div>
+        <div class="kpi"><div class="label">Despesas realizadas</div><div class="value ${uso>pctMes?'warn':'ok'}">R$ ${fmt(rDesp)}</div></div>
+        <div class="kpi"><div class="label">Orçamento de despesas usado</div><div class="value ${uso>pctMes?'warn':'ok'}">${uso}%</div></div>
+        <div class="kpi"><div class="label">Receitas realizadas</div><div class="value">R$ ${fmt(rRec)}</div></div>`;
+    }
+
+    // orçamento x realizado
+    document.getElementById('real-tab').innerHTML =
+      '<thead><tr><th>Categoria</th><th>Orçamento</th><th>Realizado</th><th>Diferença</th><th>% usado</th></tr></thead><tbody>' +
+      L.map(([n,o,r,t,cls]) => {
+        if (!temReal) return `<tr class="${cls}"><td>${n}</td><td>${o===0?'—':fmt(o)}</td><td>—</td><td>—</td><td></td></tr>`;
+        const dif = t==='s' ? o - r : r - o;          // positivo = a favor
+        const pct = o ? Math.round(r/o*100) : null;
+        const ruim = t==='s' ? (o ? r>o : r>0) : (fechado && r<o);
+        return `<tr class="${cls}"><td>${n}</td><td>${o===0?'—':fmt(o)}</td><td>${r===0?'—':fmt(r)}</td>` +
+          `<td class="${dif<0?'over':'under'}">${dif===0?'—':fmt(dif)}</td><td class="${ruim?'over':''}">${pct===null?'':pct+'%'}</td></tr>`;
+      }).join('') + '</tbody>';
+  }
+  selCen.onchange = () => { tabela(); orcamentoRealizado(); }; selMes.onchange = dia; selOrc.onchange = orcamentoRealizado;
+  tabela(); dia(); orcamentoRealizado();
 }
 
 function renderProjecao(wb){
@@ -284,17 +379,16 @@ function renderProjecao(wb){
   const h = rows.find(r => r && r[0] === 'Linha');
   const meses = h.slice(1).filter(m => m);
   const get = pref => { const r = rows.find(r => r && typeof r[0]==='string' && r[0].startsWith(pref)); return r ? r.slice(1, 1+meses.length).map(v => +v||0) : null; };
-  const sMeio = get('SALDO ACUMULADO -- cenario MEIO'), sInt = get('SALDO ACUMULADO -- cenario INTEGRAL');
-  const dMeio = get('DEFICIT -- cenario MEIO'), dInt = get('DEFICIT -- cenario INTEGRAL');
-  if (!sMeio || !sInt) throw new Error('linhas de saldo não encontradas');
+  const sMeio = get('SALDO ACUMULADO -- cenario MEIO');
+  const dMeio = get('DEFICIT -- cenario MEIO');
+  if (!sMeio) throw new Error('linhas de saldo não encontradas');
+  const sInt = sMeio;
   const n = meses.length;
   // déficit "normal": mês 2 em diante (mês 1 tem as dívidas de cartão e conta negativa)
-  const dm = dMeio[1], di = dInt[1];
+  const dm = dMeio[1];
   document.getElementById('proj-kpis').innerHTML = `
-    <div class="kpi"><div class="label">Déficit mensal (meio-período)</div><div class="value warn">R$ ${fmt(dm)}</div></div>
-    <div class="kpi"><div class="label">Déficit mensal (integral)</div><div class="value warn">R$ ${fmt(di)}</div></div>
-    <div class="kpi"><div class="label">Saldo em ${meses[n-1]} (meio-período)</div><div class="value warn">R$ ${fmt(sMeio[n-1])}</div></div>
-    <div class="kpi"><div class="label">Saldo em ${meses[n-1]} (integral)</div><div class="value warn">R$ ${fmt(sInt[n-1])}</div></div>`;
+    <div class="kpi"><div class="label">Déficit mensal</div><div class="value warn">R$ ${fmt(dm)}</div></div>
+    <div class="kpi"><div class="label">Saldo em ${meses[n-1]}</div><div class="value warn">R$ ${fmt(sMeio[n-1])}</div></div>`;
   const W=640, H=260, L=60, R=12, T=14, B=30;
   const all = [...sMeio, ...sInt];
   const mn = Math.min(0, ...all), mx = Math.max(0, ...all);
@@ -308,10 +402,8 @@ function renderProjecao(wb){
     ${ticks.map(v => `<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end" font-size="10" fill="var(--muted)">${Math.round(v/1000)}k</text>`).join('')}
     <line x1="${L}" x2="${W-R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)"/>
     <path d="${path(sMeio)}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
-    <path d="${path(sInt)}" fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-dasharray="6 4"/>
     ${meses.map((m,i) => i%step===0 || i===n-1 ? `<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="10" fill="var(--muted)">${m}</text>` : '').join('')}
-  </svg>
-  <div class="legend"><span style="color:var(--accent)">━</span> Meio-período &nbsp; <span style="color:var(--warn)">╍</span> Integral</div>`;
+  </svg>`;
 }
 
 function renderEvolucao(dados, meses, lastFilled){
