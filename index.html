@@ -78,7 +78,7 @@
   <p id="status">Carregando dados…</p>
 
   <div id="fluxo-wrap">
-    <button id="baixar" class="btn">Baixar lançamentos já registrados (.xlsx)</button>
+    <button id="baixar" class="btn">Baixar lançamentos, contas e passivos (.xlsx)</button>
     <button id="det-btn" class="btn">Abrir detalhamento</button>
     <h2 style="font-size:1.1rem;margin:16px 0 12px">Saldo das contas</h2>
     <div class="wrap" id="contas-tab"></div>
@@ -422,6 +422,7 @@ function renderFluxo(wb){
   document.getElementById('baixar').onclick = () => {
     const nb = XLSX.utils.book_new();
     if (wb.Sheets['Lancamentos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Lancamentos'], 'Lancamentos');
+    if (wb.Sheets['Contas']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Contas'], 'Contas');
     if (wb.Sheets['Passivos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Passivos'], 'Passivos');
     XLSX.writeFile(nb, 'lancamentos_registrados.xlsx');
   };
