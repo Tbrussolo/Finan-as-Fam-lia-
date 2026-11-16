@@ -188,6 +188,14 @@ function renderFluxo(wb){
   const base = rowsF.slice(hi+1).filter(r => r && r[0]).map(r => ({
     tipo:r[0], grupo:r[1], linha:r[2], cen:r[3]||'', vals: meses.map((_,i) => +r[4+i]||0)}));
 
+  // parcelamentos de cartão (itens)
+  const parc = [];
+  const wsP = wb.Sheets['Parcelamentos'];
+  if (wsP){
+    const rp = XLSX.utils.sheet_to_json(wsP, {header:1, raw:true});
+    const pi = rp.findIndex(r => r && r[0] === 'Item');
+    if (pi >= 0) rp.slice(pi+1).forEach(r => { if (r && r[0]) parc.push({nome:r[0], vals: meses.map((_,i) => +r[2+i]||0)}); });
+  }
   // lançamentos reais
   const lanc = [];
   const wsL = wb.Sheets['Lancamentos'];
@@ -214,13 +222,22 @@ function renderFluxo(wb){
   const conhecidos = [IGREJA, ...grupos];
   const hoje = new Date();
 
+  // detalhe de "Dívidas e empréstimos": cada linha e, dentro dos parcelamentos, cada item
+  const DIV = 'Dívidas e empréstimos', PARC = 'Parcelamentos de cartão';
+  const norm = s => String(s||'').trim().toLowerCase();
+  const DET = [];
+  linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===DIV).forEach(r => {
+    DET.push({nome:r.linha, nivel:1, orc: i => r.vals[i], match: l => norm(l.sub)===norm(r.linha) || (r.linha===PARC && parc.some(p => norm(p.nome)===norm(l.sub)))});
+    if (r.linha === PARC) parc.forEach(p => DET.push({nome:p.nome, nivel:2, orc: i => p.vals[i], match: l => norm(l.sub)===norm(p.nome)}));
+  });
+
   // agregados do orçamento de um mês (índice i)
   function aggOrc(i){
     const ent = f => soma(linhasOrc.filter(r => r.tipo==='Entrada' && f(r)).map(r => r.vals[i]));
     const sai = g => soma(linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===g).map(r => r.vals[i]));
     const rec = ent(()=>true), paula = ent(r => r.linha.includes('Paula')), thiago = ent(r => r.linha.includes('Thiago'));
     const g = {}; grupos.forEach(x => g[x] = sai(x));
-    return {rec, paula, thiago, outros: rec-paula-thiago, ig: sai(IGREJA), g, fora: 0};
+    return {rec, paula, thiago, outros: rec-paula-thiago, ig: sai(IGREJA), g, fora: 0, det: DET.map(d => d.orc(i))};
   }
   // agregados de uma lista de lançamentos reais
   function aggReal(ls){
@@ -230,7 +247,8 @@ function renderFluxo(wb){
     const g = {}; grupos.forEach(x => g[x] = soma(ls.filter(l => l.v<0 && l.grupo===x).map(l => -l.v)));
     return {rec, paula, thiago, outros: rec-paula-thiago,
             ig: soma(ls.filter(l => l.v<0 && l.grupo===IGREJA).map(l => -l.v)), g,
-            fora: soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v))};
+            fora: soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v)),
+            det: DET.map(d => soma(ls.filter(l => l.v<0 && l.grupo===DIV && d.match(l)).map(l => -l.v)))};
   }
   // linhas da tabela na ordem definida; tipo: e = entrada, s = saída
   function linhas(A, comFora){
@@ -242,7 +260,8 @@ function renderFluxo(wb){
       ['&nbsp;&nbsp;Outros', A.outros, 'sub', 'e'],
       ['Dízimos e Ofertas (igreja)', A.ig, '', 's'],
       ['Resultado líquido', A.rec - A.ig, 'tot', 'e'],
-      ...grupos.map(x => [x, A.g[x], '', 's']),
+      ...grupos.flatMap(x => [[x, A.g[x], '', 's'],
+        ...(x===DIV ? DET.map((d,j) => [(d.nivel===2?'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;':'&nbsp;&nbsp;')+d.nome, A.det[j], 'sub', 's', true]) : [])]),
       ...(comFora ? [['Outros (real, grupo fora da lista)', A.fora, '', 's']] : []),
       ['Total despesas', desp, 'tot', 's'],
       ['Resultado do mês', A.rec - A.ig - desp, 'tot', 'e'],
@@ -269,7 +288,9 @@ function renderFluxo(wb){
       const wd = ['D','S','T','Q','Q','S','S'][new Date(ano, mi, k+1).getDay()];
       return `<th class="dia">${String(k+1).padStart(2,'0')}<br><small>${wd}</small></th>`; }).join('');
     const head = `<thead><tr><th class="c1">Categoria</th><th class="c2">Orçado</th><th class="c3">Realizado</th>${dias}</tr></thead>`;
+    const keep = k => !O[k][4] || O[k][1]!==0 || R[k][1]!==0 || D.some(d => d[k][1]!==0);
     const body = O.map(([n,o,cls,t], k) => {
+      if (!keep(k)) return '';
       const r = R[k][1];
       const vermelho = ruim(t, cls, o, r) ? 'over' : '';
       const dcells = D.map(d => `<td class="dia ${d[k][1]<0?'over':''}">${cel(d[k][1])}</td>`).join('');
@@ -293,7 +314,8 @@ function renderFluxo(wb){
     const head1 = '<tr><th class="c1" rowspan="2">Categoria</th>' + cols.map(c =>
       `<th colspan="${c.tem?2:1}" class="mhead">${c.m}</th>`).join('') + '</tr>';
     const head2 = '<tr>' + cols.map(c => c.tem ? '<th>Orçado</th><th>Realizado</th>' : '<th>Orçado</th>').join('') + '</tr>';
-    const linhasHtml = O[0].map(([nome,,cls,t], k) => '<tr class="'+cls+'"><td class="c1">'+nome+'</td>' + cols.map((c,ci) => {
+    const keepG = k => !O[0][k][4] || cols.some((c,ci) => O[ci][k][1]!==0 || (R[ci] && R[ci][k][1]!==0));
+    const linhasHtml = O[0].map(([nome,,cls,t], k) => !keepG(k) ? '' : '<tr class="'+cls+'"><td class="c1">'+nome+'</td>' + cols.map((c,ci) => {
       const o = O[ci][k][1];
       let s = `<td>${cel(o)}</td>`;
       if (c.tem){ const r = R[ci][k][1]; s += `<td class="${ruim(t,cls,o,r)?'over':''}">${cel(r)}</td>`; }
