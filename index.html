@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orçamento Família Brussolo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --fg:#1a1d23; --muted:#6b7280;
+    --accent:#2f5597; --ok:#1f8a4c; --warn:#c0392b; --border:#e3e6eb;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171c; --card:#1c2026; --fg:#e8eaed; --muted:#9aa1ad;
+      --accent:#6f9ceb; --ok:#4caf7d; --warn:#e5736a; --border:#2b3038; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Arial,Helvetica,sans-serif;
+    padding:24px 16px 48px;}
+  h1{font-size:1.4rem;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:.9rem;margin:0 0 20px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .kpi .label{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .kpi .value{font-size:1.4rem;font-weight:bold;margin-top:4px}
+  .kpi .value.warn{color:var(--warn)}
+  .kpi .value.ok{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--border);
+    border-radius:10px;overflow:hidden;font-size:.88rem}
+  th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)}
+  th:first-child,td:first-child{text-align:left}
+  th{background:var(--accent);color:#fff;font-weight:600;font-size:.78rem}
+  tbody tr:last-child td{border-bottom:none}
+  td.over{color:var(--warn);font-weight:bold}
+  td.under{color:var(--ok)}
+  .wrap{overflow-x:auto;margin-bottom:28px}
+  .legend{font-size:.78rem;color:var(--muted);margin-top:8px}
+  .chart{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:24px}
+  .chart h2{font-size:1rem;margin:0 0 12px}
+  .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:.8rem}
+  .bar-label{width:140px;flex:none;color:var(--muted)}
+  .bar-track{flex:1;background:var(--border);border-radius:4px;height:16px;position:relative;overflow:hidden}
+  .bar-fill{height:100%;border-radius:4px;background:var(--accent)}
+  .bar-fill.over{background:var(--warn)}
+  .bar-val{width:90px;flex:none;text-align:right;font-variant-numeric:tabular-nums}
+  .bar-pct{width:44px;flex:none;text-align:right;color:var(--ok);font-variant-numeric:tabular-nums}
+  .bar-pct.over{color:var(--warn);font-weight:bold}
+  .seletor{display:block;margin-bottom:16px;font-size:.9rem;color:var(--muted)}
+  .seletor select{font-size:.9rem;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg)}
+  #status{color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+  <h1>Orçamento x Realizado — Família Brussolo</h1>
+  <p class="sub" id="subtitle">Carregando dados de dados_orcamento.xlsx…</p>
+
+  <div class="kpis" id="kpis"></div>
+
+  <label class="seletor">Mês: <select id="mes"></select></label>
+
+  <div class="chart">
+    <h2>Evolução do realizado total x orçamento</h2>
+    <div id="evolucao"></div>
+  </div>
+
+  <div class="chart">
+    <h2 id="chart-title">Orçamento x Realizado por grupo</h2>
+    <div id="bars"></div>
+  </div>
+
+  <div id="proj-wrap">
+    <h2 style="font-size:1.1rem;margin:8px 0 12px">Fluxo de caixa projetado</h2>
+    <div class="kpis" id="proj-kpis"></div>
+    <div class="chart">
+      <h2>Saldo acumulado projetado</h2>
+      <div id="proj-chart"></div>
+      <p class="legend">Inclui a quitação do cartão BTG e da conta negativa em Nov/26 e o pagamento do empréstimo do amigo em Ago/29. Pendente de confirmação: salário da Paula (hoje zero), valores da escola e outras entradas.</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <table id="tabela"></table>
+  </div>
+  <p class="legend">Vermelho = estourou o orçamento naquele mês. Verde = dentro do orçamento. Dados vêm do arquivo dados_orcamento.xlsx neste mesmo repositório — substitua esse arquivo para atualizar o painel.</p>
+  <p id="status"></p>
+
+<script>
+const fmt = n => n.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+async function load(){
+  const statusEl = document.getElementById('status');
+  try {
+    const res = await fetch('dados_orcamento.xlsx', {cache:'no-store'});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+
+    // acha a linha de cabecalho (primeira linha com "Grupo" na coluna A)
+    let headerIdx = rows.findIndex(r => r && r[0] === 'Grupo');
+    if (headerIdx === -1) throw new Error('Cabeçalho "Grupo" não encontrado na planilha.');
+    const header = rows[headerIdx];
+    const meses = header.slice(2).filter(m => m !== undefined && m !== null && m !== '');
+
+    const dados = [];
+    for (let i = headerIdx + 1; i < rows.length; i++){
+      const r = rows[i];
+      if (!r || !r[0] || typeof r[0] !== 'string') continue;
+      const grupo = r[0];
+      if (grupo.length > 60 || /^fonte/i.test(grupo)) continue; // linhas de nota, não são grupos
+      const orcamento = typeof r[1] === 'number' ? r[1] : null;
+      const valores = meses.map((_, idx) => {
+        const v = r[2 + idx];
+        return typeof v === 'number' ? v : null;
+      });
+      dados.push({grupo, orcamento, valores});
+    }
+    if (!dados.length) throw new Error('Nenhuma linha de grupo encontrada.');
+
+    render(dados, meses);
+    try { renderProjecao(wb); } catch (e) { document.getElementById('proj-wrap').style.display = 'none'; }
+    statusEl.textContent = '';
+  } catch (err){
+    document.getElementById('subtitle').textContent = 'Não consegui carregar os dados.';
+    statusEl.textContent = 'Erro: ' + err.message + ' — confira se dados_orcamento.xlsx está na mesma pasta que este index.html.';
+  }
+}
+
+function lastFilledMonthIndex(meses, dados){
+  for (let i = meses.length - 1; i >= 0; i--){
+    if (dados.some(d => d.valores[i] !== null)) return i;
+  }
+  return -1;
+}
+
+function render(dados, meses){
+  const lastFilled = lastFilledMonthIndex(meses, dados);
+  const sel = document.getElementById('mes');
+  sel.innerHTML = meses.map((m,i) => `<option value="${i}">${m}${i>lastFilled?' (sem dados)':''}</option>`).join('');
+  sel.value = String(Math.max(lastFilled, 0));
+  sel.onchange = () => renderMes(dados, meses, parseInt(sel.value, 10), lastFilled);
+  renderEvolucao(dados, meses, lastFilled);
+  renderMes(dados, meses, Math.max(lastFilled, 0), lastFilled);
+}
+
+function renderProjecao(wb){
+  const ws = wb.Sheets['Projecao'];
+  if (!ws) throw new Error('sem aba Projecao');
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+  const h = rows.find(r => r && r[0] === 'Linha');
+  const meses = h.slice(1).filter(m => m);
+  const get = pref => { const r = rows.find(r => r && typeof r[0]==='string' && r[0].startsWith(pref)); return r ? r.slice(1, 1+meses.length).map(v => +v||0) : null; };
+  const sMeio = get('SALDO ACUMULADO -- cenario MEIO'), sInt = get('SALDO ACUMULADO -- cenario INTEGRAL');
+  const dMeio = get('DEFICIT -- cenario MEIO'), dInt = get('DEFICIT -- cenario INTEGRAL');
+  if (!sMeio || !sInt) throw new Error('linhas de saldo não encontradas');
+  const n = meses.length;
+  // déficit "normal": mês 2 em diante (mês 1 tem as dívidas de cartão e conta negativa)
+  const dm = dMeio[1], di = dInt[1];
+  document.getElementById('proj-kpis').innerHTML = `
+    <div class="kpi"><div class="label">Déficit mensal (meio-período)</div><div class="value warn">R$ ${fmt(dm)}</div></div>
+    <div class="kpi"><div class="label">Déficit mensal (integral)</div><div class="value warn">R$ ${fmt(di)}</div></div>
+    <div class="kpi"><div class="label">Saldo em ${meses[n-1]} (meio-período)</div><div class="value warn">R$ ${fmt(sMeio[n-1])}</div></div>
+    <div class="kpi"><div class="label">Saldo em ${meses[n-1]} (integral)</div><div class="value warn">R$ ${fmt(sInt[n-1])}</div></div>`;
+  const W=640, H=260, L=60, R=12, T=14, B=30;
+  const all = [...sMeio, ...sInt];
+  const mn = Math.min(0, ...all), mx = Math.max(0, ...all);
+  const span = (mx - mn) || 1;
+  const y = v => T + (H-T-B) * (1 - (v-mn)/span);
+  const x = i => L + (W-L-R) * (n>1 ? i/(n-1) : 0);
+  const path = arr => arr.map((v,i) => (i?'L':'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+  const ticks = [mn, mn+span/2, mx];
+  const step = Math.ceil(n/8);
+  document.getElementById('proj-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="Saldo acumulado projetado">
+    ${ticks.map(v => `<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end" font-size="10" fill="var(--muted)">${Math.round(v/1000)}k</text>`).join('')}
+    <line x1="${L}" x2="${W-R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)"/>
+    <path d="${path(sMeio)}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+    <path d="${path(sInt)}" fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-dasharray="6 4"/>
+    ${meses.map((m,i) => i%step===0 || i===n-1 ? `<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="10" fill="var(--muted)">${m}</text>` : '').join('')}
+  </svg>
+  <div class="legend"><span style="color:var(--accent)">━</span> Meio-período &nbsp; <span style="color:var(--warn)">╍</span> Integral</div>`;
+}
+
+function renderEvolucao(dados, meses, lastFilled){
+  const el = document.getElementById('evolucao');
+  if (lastFilled < 0){ el.innerHTML = '<p class="legend">Sem dados para o gráfico.</p>'; return; }
+  const totalOrc = dados.reduce((s,d) => s + (d.orcamento||0), 0);
+  const pts = meses.slice(0, lastFilled+1).map((m,i) => ({m, v: dados.reduce((s,d) => s + (d.valores[i]||0), 0)}));
+  const W=640, H=220, L=56, R=12, T=14, B=30;
+  const max = Math.max(totalOrc, ...pts.map(p=>p.v), 1) * 1.1;
+  const bw = (W-L-R)/pts.length;
+  const y = v => T + (H-T-B) * (1 - v/max);
+  const yOrc = y(totalOrc);
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="Realizado total por mês versus orçamento">
+    ${[0,.5,1].map(f => { const v=max/1.1*f; return `<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end" font-size="10" fill="var(--muted)">${Math.round(v/1000)}k</text>`; }).join('')}
+    ${pts.map((p,i) => { const x=L+i*bw+bw*0.2, h=y(0)-y(p.v); const over=totalOrc && p.v>totalOrc;
+      return `<rect x="${x}" y="${y(p.v)}" width="${bw*0.6}" height="${h}" rx="3" fill="${over?'var(--warn)':'var(--accent)'}"><title>${p.m}: R$ ${fmt(p.v)}</title></rect>
+      <text x="${x+bw*0.3}" y="${H-10}" text-anchor="middle" font-size="10" fill="var(--muted)">${p.m}</text>`; }).join('')}
+    <line x1="${L}" x2="${W-R}" y1="${yOrc}" y2="${yOrc}" stroke="var(--ok)" stroke-width="2" stroke-dasharray="5 4"/>
+    <text x="${W-R}" y="${yOrc-5}" text-anchor="end" font-size="11" font-weight="bold" fill="var(--ok)" stroke="var(--card)" stroke-width="3" paint-order="stroke">Orçamento R$ ${fmt(totalOrc)}</text>
+  </svg>`;
+}
+
+function renderMes(dados, meses, lastIdx, lastFilled){
+  const semDados = lastIdx > lastFilled;
+  document.getElementById('subtitle').textContent =
+    lastFilled >= 0 ? `Último mês com dados: ${meses[lastFilled]}` : 'Nenhum mês preenchido ainda.';
+
+  // KPIs
+  const totalOrc = dados.reduce((s,d) => s + (d.orcamento||0), 0);
+  const totalReal = lastIdx >= 0 ? dados.reduce((s,d) => s + (d.valores[lastIdx]||0), 0) : 0;
+  const estourou = lastIdx >= 0 ? dados.filter(d => d.orcamento && d.valores[lastIdx] !== null && d.valores[lastIdx] > d.orcamento).length : 0;
+  const kpis = document.getElementById('kpis');
+  kpis.innerHTML = `
+    <div class="kpi"><div class="label">Orçamento total/mês</div><div class="value">R$ ${fmt(totalOrc)}</div></div>
+    <div class="kpi"><div class="label">Realizado (${lastIdx>=0?meses[lastIdx]:'-'})</div>
+      <div class="value ${totalReal>totalOrc?'warn':'ok'}">R$ ${fmt(totalReal)}</div></div>
+    <div class="kpi"><div class="label">Grupos estourados</div>
+      <div class="value ${estourou>0?'warn':'ok'}">${estourou} de ${dados.length}</div></div>
+  `;
+
+  // barras (orcamento x realizado do ultimo mes preenchido)
+  document.getElementById('chart-title').textContent =
+    'Orçamento x Realizado — ' + (lastIdx>=0 ? meses[lastIdx] : '(sem dados)');
+  const maxVal = Math.max(1, ...dados.map(d => Math.max(d.orcamento||0, lastIdx>=0?(d.valores[lastIdx]||0):0)));
+  const bars = document.getElementById('bars');
+  bars.innerHTML = dados.map(d => {
+    const real = lastIdx>=0 ? d.valores[lastIdx] : null;
+    const orc = d.orcamento;
+    const pct = real !== null ? Math.min(100, (real/maxVal)*100) : 0;
+    const over = orc !== null && real !== null && real > orc;
+    const uso = orc && real !== null ? Math.round(real/orc*100) : null;
+    return `<div class="bar-row">
+      <div class="bar-label">${d.grupo}</div>
+      <div class="bar-track"><div class="bar-fill ${over?'over':''}" style="width:${pct}%"></div></div>
+      <div class="bar-val">${real===null?'—':'R$ '+fmt(real)}</div>
+      <div class="bar-pct ${over?'over':''}">${uso===null?'':uso+'%'}</div>
+    </div>`;
+  }).join('');
+
+  // tabela
+  let thead = '<thead><tr><th>Grupo</th><th>Orçamento</th>' +
+    meses.map(m => `<th>${m}</th>`).join('') + '</tr></thead>';
+  let tbody = '<tbody>' + dados.map(d => {
+    const cells = d.valores.map(v => {
+      if (v === null) return '<td>—</td>';
+      const cls = d.orcamento ? (v > d.orcamento ? 'over' : 'under') : '';
+      return `<td class="${cls}">R$ ${fmt(v)}</td>`;
+    }).join('');
+    return `<tr><td>${d.grupo}</td><td>${d.orcamento===null?'—':'R$ '+fmt(d.orcamento)}</td>${cells}</tr>`;
+  }).join('') + '</tbody>';
+  document.getElementById('tabela').innerHTML = thead + tbody;
+}
+
+load();
+</script>
+</body>
+</html>
