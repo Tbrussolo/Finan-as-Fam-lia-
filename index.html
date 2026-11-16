@@ -52,6 +52,7 @@
   table.fluxo th{white-space:nowrap}
   table.fluxo td{white-space:nowrap}
   table.fluxo tr.tot td{font-weight:bold}
+  table.fluxo tr.sub td{color:var(--muted);font-size:.82rem}
   details.hist{margin:24px 0}
   details.hist summary{cursor:pointer;color:var(--muted);font-size:.9rem;margin-bottom:12px}
   #status{color:var(--muted);font-size:.85rem}
@@ -209,30 +210,55 @@ function renderFluxo(wb){
   function tabela(){
     const cen = selCen.value;
     const linhas = base.filter(r => r.cen === '' || r.cen === cen);
-    const grupos = [...new Set(linhas.filter(r => r.tipo==='Saída').map(r => r.grupo))];
-    const extras = new Set();
-    const ent = meses.map((m,i) => realPorMes[m]
-      ? realPorMes[m].filter(l => l.v>0).reduce((s,l)=>s+l.v,0)
-      : linhas.filter(r => r.tipo==='Entrada').reduce((s,r)=>s+r.vals[i],0));
-    const porGrupo = {};
-    grupos.forEach(g => porGrupo[g] = meses.map((m,i) => realPorMes[m]
-      ? realPorMes[m].filter(l => l.v<0 && l.grupo===g).reduce((s,l)=>s-l.v,0)
-      : linhas.filter(r => r.tipo==='Saída' && r.grupo===g).reduce((s,r)=>s+r.vals[i],0)));
-    const outros = meses.map(m => realPorMes[m]
-      ? realPorMes[m].filter(l => l.v<0 && !grupos.includes(l.grupo)).reduce((s,l)=>s-l.v,0) : 0);
-    const temOutros = outros.some(v => v>0);
-    const sai = meses.map((_,i) => grupos.reduce((s,g)=>s+porGrupo[g][i],0) + outros[i]);
-    const res = meses.map((_,i) => ent[i]-sai[i]);
-    let ac = 0; const saldo = res.map(v => (ac += v));
+    const soma = (arr) => arr.reduce((s,v)=>s+v,0);
+    const real = m => realPorMes[m];
+
+    // Receitas: Paula, Thiago, Outros
+    const pessoa = (nome) => meses.map((m,i) => real(m)
+      ? soma(real(m).filter(l => l.v>0 && (l.sub||'').toLowerCase()===nome.toLowerCase()).map(l=>l.v))
+      : soma(linhas.filter(r => r.tipo==='Entrada' && r.linha.includes(nome)).map(r=>r.vals[i])));
+    const recPaula = pessoa('Paula'), recThiago = pessoa('Thiago');
+    const recTotal = meses.map((m,i) => real(m)
+      ? soma(real(m).filter(l => l.v>0).map(l=>l.v))
+      : soma(linhas.filter(r => r.tipo==='Entrada').map(r=>r.vals[i])));
+    const recOutros = recTotal.map((t,i) => t - recPaula[i] - recThiago[i]);
+
+    // Saídas por grupo
+    const saidaGrupo = g => meses.map((m,i) => real(m)
+      ? soma(real(m).filter(l => l.v<0 && l.grupo===g).map(l=>-l.v))
+      : soma(linhas.filter(r => r.tipo==='Saída' && r.grupo===g).map(r=>r.vals[i])));
+    const IGREJA = 'Igreja';
+    const ORDEM = ['Moradia','Alimentação','Educação','Transporte','Contas fixas','Saúde',
+                   'Despesas pessoais','Lazer','Reserva de emergência/metas curtas'];
+    const presentes = [...new Set(linhas.filter(r => r.tipo==='Saída').map(r => r.grupo))];
+    const resto = presentes.filter(g => g!==IGREJA && !ORDEM.includes(g)).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    const grupos = [...ORDEM, ...resto];
+    const valores = {}; [IGREJA, ...grupos].forEach(g => valores[g] = saidaGrupo(g));
+    const conhecidos = [IGREJA, ...grupos];
+    const outrosReal = meses.map(m => real(m)
+      ? soma(real(m).filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l=>-l.v)) : 0);
+    const temOutros = outrosReal.some(v => v>0);
+
+    const liquido = meses.map((_,i) => recTotal[i] - valores[IGREJA][i]);
+    const totalDesp = meses.map((_,i) => soma(grupos.map(g => valores[g][i])) + outrosReal[i]);
+    const resultado = meses.map((_,i) => liquido[i] - totalDesp[i]);
+    let ac = 0; const saldo = resultado.map(v => (ac += v));
+
     const c = v => `<td class="${v<0?'over':''}">${v===0?'—':fmt(v)}</td>`;
     const row = (nome, arr, cls='') => `<tr class="${cls}"><td>${nome}</td>${arr.map(c).join('')}</tr>`;
-    const head = `<thead><tr><th>Linha</th>${meses.map(m => `<th>${m}${realPorMes[m]?'<br><small>real</small>':''}</th>`).join('')}</tr></thead>`;
+    const neg = arr => arr.map(v => -v);
+    const head = `<thead><tr><th>Linha</th>${meses.map(m => `<th>${m}${real(m)?'<br><small>real</small>':''}</th>`).join('')}</tr></thead>`;
     document.getElementById('fluxo-tab').innerHTML = head + '<tbody>' +
-      row('Entradas', ent, 'tot') +
-      grupos.map(g => row(g, porGrupo[g].map(v => -v))).join('') +
-      (temOutros ? row('Outros (real, grupo fora da lista)', outros.map(v => -v)) : '') +
-      row('Total saídas', sai.map(v => -v), 'tot') +
-      row('Resultado do mês', res, 'tot') +
+      row('Receitas', recTotal, 'tot') +
+      row('&nbsp;&nbsp;Paula', recPaula, 'sub') +
+      row('&nbsp;&nbsp;Thiago', recThiago, 'sub') +
+      row('&nbsp;&nbsp;Outros', recOutros, 'sub') +
+      row('Dízimos e Ofertas (igreja)', neg(valores[IGREJA])) +
+      row('Resultado líquido', liquido, 'tot') +
+      grupos.map(g => row(g, neg(valores[g]))).join('') +
+      (temOutros ? row('Outros (real, grupo fora da lista)', neg(outrosReal)) : '') +
+      row('Total despesas', neg(totalDesp), 'tot') +
+      row('Resultado do mês', resultado, 'tot') +
       row('Saldo acumulado', saldo, 'tot') + '</tbody>';
   }
 
