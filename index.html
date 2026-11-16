@@ -84,6 +84,10 @@
     <h2 style="font-size:1.1rem;margin:24px 0 12px">Relatório geral — todos os meses</h2>
     <div class="wrap"><table id="geral-tab" class="orc2"></table></div>
     <p class="legend">Meses sem realizado mostram só o orçado. Saldo acumulado parte de zero em Nov/26.</p>
+
+    <h2 style="font-size:1.1rem;margin:24px 0 12px">Passivos em aberto (fora do fluxo de caixa)</h2>
+    <div class="wrap" id="passivos-tab"></div>
+    <p class="legend">Só o valor da fatura. Juros e data de atualização são notas informativas e não alteram o saldo.</p>
   </div>
 
   <details class="hist">
@@ -196,6 +200,22 @@ function renderFluxo(wb){
     const pi = rp.findIndex(r => r && r[0] === 'Item');
     if (pi >= 0) rp.slice(pi+1).forEach(r => { if (r && r[0]) parc.push({nome:r[0], vals: meses.map((_,i) => +r[2+i]||0)}); });
   }
+  // passivos em aberto (fora do fluxo)
+  const pass = [];
+  const wsPa = wb.Sheets['Passivos'];
+  if (wsPa){
+    const rq = XLSX.utils.sheet_to_json(wsPa, {header:1, raw:true});
+    const qi = rq.findIndex(r => r && r[0] === 'Mês');
+    if (qi >= 0) rq.slice(qi+1).forEach(r => {
+      if (!r || typeof r[3] !== 'number') return;
+      let mes = r[0];
+      if (typeof mes === 'number'){ const d = parseData(mes); mes = d ? mesKey(d) : ''; }
+      mes = String(mes||'').trim(); mes = mes.charAt(0).toUpperCase() + mes.slice(1).toLowerCase();
+      const dt = parseData(r[4]);
+      pass.push({mes, credor:r[1]||'', desc:r[2]||'', valor:r[3], data: dt ? `${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}/${dt.getFullYear()}` : (r[4]||''),
+                 nota:r[5]||'', quitado: /quit/i.test(String(r[6]||''))});
+    });
+  }
   // lançamentos reais
   const lanc = [];
   const wsL = wb.Sheets['Lancamentos'];
@@ -221,6 +241,7 @@ function renderFluxo(wb){
   const grupos = [...ORDEM, ...resto];
   const conhecidos = [IGREJA, ...grupos];
   const hoje = new Date();
+  const passAte = m => soma(pass.filter(p => !p.quitado && meses.indexOf(p.mes) >= 0 && meses.indexOf(p.mes) <= meses.indexOf(m)).map(p => p.valor));
 
   // detalhe de "Dívidas e empréstimos": cada linha e, dentro dos parcelamentos, cada item
   const DIV = 'Dívidas e empréstimos', PARC = 'Parcelamentos de cartão';
@@ -297,7 +318,9 @@ function renderFluxo(wb){
       return `<tr class="${cls}"><td class="c1">${n}</td><td class="c2">${cel(o)}</td>` +
         `<td class="c3 ${vermelho || (k===O.length-1 && r<0 ? 'over':'')}">${cel(r)}</td>${dcells}</tr>`;
     }).join('');
-    document.getElementById('mes-tab').innerHTML = head + '<tbody>' + body + '</tbody>';
+    const rowPass = pass.length
+      ? `<tr class="tot passivo"><td class="c1">Passivo em aberto (fora do fluxo)</td><td class="c2">—</td><td class="c3">${cel(passAte(m))}</td>${D.map(() => '<td class="dia"></td>').join('')}</tr>` : '';
+    document.getElementById('mes-tab').innerHTML = head + '<tbody>' + body + rowPass + '</tbody>';
   }
 
   // ---------- relatório geral: todos os meses, só orçado x realizado ----------
@@ -329,10 +352,21 @@ function renderFluxo(wb){
       if (c.tem){ ar += R[ci][n-1][1]; s += `<td class="${ar<0?'over':''}">${fmt(ar)}</td>`; }
       return s;
     }).join('') + '</tr>';
-    document.getElementById('geral-tab').innerHTML = '<thead>' + head1 + head2 + '</thead><tbody>' + linhasHtml.join('') + saldo + '</tbody>';
+    const rowPassG = pass.length
+      ? '<tr class="tot passivo"><td class="c1">Passivo em aberto (fora do fluxo)</td>' + cols.map(c =>
+          `<td colspan="${c.tem?2:1}" style="text-align:center">${cel(passAte(c.m))}</td>`).join('') + '</tr>' : '';
+    document.getElementById('geral-tab').innerHTML = '<thead>' + head1 + head2 + '</thead><tbody>' + linhasHtml.join('') + saldo + rowPassG + '</tbody>';
+  }
+  function blocoPassivos(){
+    const el = document.getElementById('passivos-tab');
+    if (!pass.length){ el.innerHTML = '<p class="legend">Nenhum passivo informado. Preencha a aba Passivos do dados_orcamento.xlsx quando uma fatura ficar em aberto.</p>'; return; }
+    const ab = pass.filter(p => !p.quitado);
+    el.innerHTML = '<table class="orc2"><thead><tr><th class="c0">Mês</th><th class="c0">Credor</th><th class="c0">Descrição</th><th>Valor em aberto</th><th>Atualizado em</th><th class="c0">Nota (juros)</th><th>Status</th></tr></thead><tbody>' +
+      pass.map(p => `<tr><td style="text-align:left">${p.mes}</td><td style="text-align:left">${p.credor}</td><td style="text-align:left">${p.desc}</td><td>${fmt(p.valor)}</td><td>${p.data||'—'}</td><td style="text-align:left;white-space:normal;min-width:220px">${p.nota||'—'}</td><td>${p.quitado?'Quitado':'Em aberto'}</td></tr>`).join('') +
+      `<tr class="tot"><td colspan="3" style="text-align:left">Total em aberto</td><td>${fmt(soma(ab.map(p=>p.valor)))}</td><td colspan="3"></td></tr></tbody></table>`;
   }
   selOrc.onchange = visaoMes;
-  visaoMes(); geral();
+  visaoMes(); geral(); blocoPassivos();
 }
 
 function renderProjecao(wb){
