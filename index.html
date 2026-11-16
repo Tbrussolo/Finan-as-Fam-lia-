@@ -57,6 +57,16 @@
   table.fluxo tr.sub td{color:var(--muted);font-size:.82rem}
   details.hist{margin:24px 0}
   details.hist summary{cursor:pointer;color:var(--muted);font-size:.9rem;margin-bottom:12px}
+  table.orc2{overflow:visible;width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:.82rem}
+  table.orc2 th,table.orc2 td{white-space:nowrap;padding:6px 10px;border-bottom:1px solid var(--border)}
+  table.orc2 .c1{position:sticky;left:0;min-width:210px;max-width:210px;background:var(--card);z-index:2;text-align:left}
+  table.orc2 .c2{position:sticky;left:210px;min-width:100px;background:var(--card);z-index:2}
+  table.orc2 .c3{position:sticky;left:310px;min-width:100px;background:var(--card);z-index:2;border-right:2px solid var(--border)}
+  table.orc2 th.c1,table.orc2 th.c2,table.orc2 th.c3{background:var(--accent);z-index:3}
+  table.orc2 th.dia,table.orc2 td.dia{min-width:62px}
+  table.orc2 th.mhead{text-align:center;border-left:1px solid #ffffff44}
+  table.orc2 tr.tot td{font-weight:bold}
+  table.orc2 tr.sub td{color:var(--muted);font-size:.78rem}
   #status{color:var(--muted);font-size:.85rem}
 </style>
 </head>
@@ -66,30 +76,14 @@
   <p id="status">Carregando dados…</p>
 
   <div id="fluxo-wrap">
-    <h2 style="font-size:1.1rem;margin:8px 0 12px">Orçamento do mês</h2>
+    <h2 style="font-size:1.1rem;margin:8px 0 12px">Orçamento x Realizado no mês</h2>
     <label class="seletor">Mês: <select id="mes-orc"></select></label>
-    <div class="wrap"><table id="orc-tab" class="orc"></table></div>
+    <div class="wrap"><table id="mes-tab" class="orc2"></table></div>
+    <p class="legend">Orçado e Realizado ficam fixos; role para a direita para ver o dia a dia. Realizado em vermelho = passou do orçamento. O realizado vem da aba Lancamentos.</p>
 
-    <h2 style="font-size:1.1rem;margin:8px 0 12px">Como está o mês: orçamento x realizado</h2>
-    <div class="kpis" id="mes-cards"></div>
-    <div class="wrap"><table id="real-tab" class="orc"></table></div>
-    <p class="legend">Realizado vem da aba Lancamentos. Diferença positiva = a favor (gastou menos ou recebeu mais que o orçamento). % usado em vermelho = passou do orçamento.</p>
-
-    <h2 style="font-size:1.1rem;margin:20px 0 12px">Fluxo de caixa — Nov/26 em diante</h2>
-    <div class="wrap"><table id="fluxo-tab" class="fluxo"></table></div>
-    <p class="legend">Meses futuros = orçamento mensal (sem datas). Meses marcados "real" usam os lançamentos com data. Saldo acumulado parte de zero em Nov/26.</p>
-    <label class="seletor">Dia a dia — mês: <select id="mes-dia"></select></label>
-    <div class="wrap" id="dia-tab"></div>
-  </div>
-
-  <div id="proj-wrap">
-    <h2 style="font-size:1.1rem;margin:8px 0 12px">Fluxo de caixa projetado</h2>
-    <div class="kpis" id="proj-kpis"></div>
-    <div class="chart">
-      <h2>Saldo acumulado projetado</h2>
-      <div id="proj-chart"></div>
-      <p class="legend">Inclui a quitação do cartão BTG e da conta negativa em Nov/26 e o pagamento do empréstimo do amigo em Ago/29. Pendente de confirmação: salário da Paula (hoje zero) e outras entradas.</p>
-    </div>
+    <h2 style="font-size:1.1rem;margin:24px 0 12px">Relatório geral — todos os meses</h2>
+    <div class="wrap"><table id="geral-tab" class="orc2"></table></div>
+    <p class="legend">Meses sem realizado mostram só o orçado. Saldo acumulado parte de zero em Nov/26.</p>
   </div>
 
   <details class="hist">
@@ -148,7 +142,6 @@ async function load(){
 
     render(dados, meses);
     try { renderFluxo(wb); } catch (e) { document.getElementById('fluxo-wrap').style.display = 'none'; }
-    try { renderProjecao(wb); } catch (e) { document.getElementById('proj-wrap').style.display = 'none'; }
     statusEl.textContent = '';
   } catch (err){
     document.getElementById('subtitle').textContent = 'Não consegui carregar os dados.';
@@ -209,167 +202,115 @@ function renderFluxo(wb){
   const realPorMes = {};
   lanc.forEach(l => (realPorMes[mesKey(l.d)] = realPorMes[mesKey(l.d)] || []).push(l));
 
-  const selCen = {value:'meio'}; // escola: valor atual (meio-período); só muda se o custo da escola mudar
-  const selMes = document.getElementById('mes-dia');
-  selMes.innerHTML = meses.map(m => `<option value="${m}">${m}${realPorMes[m]?' (real)':''}</option>`).join('');
-  const primeiroReal = meses.find(m => realPorMes[m]);
-  selMes.value = primeiroReal || meses[0];
-
-  function tabela(){
-    const cen = selCen.value;
-    const linhas = base.filter(r => r.cen === '' || r.cen === cen);
-    const soma = (arr) => arr.reduce((s,v)=>s+v,0);
-    const real = m => realPorMes[m];
-
-    // Receitas: Paula, Thiago, Outros
-    const pessoa = (nome) => meses.map((m,i) => real(m)
-      ? soma(real(m).filter(l => l.v>0 && (l.sub||'').toLowerCase()===nome.toLowerCase()).map(l=>l.v))
-      : soma(linhas.filter(r => r.tipo==='Entrada' && r.linha.includes(nome)).map(r=>r.vals[i])));
-    const recPaula = pessoa('Paula'), recThiago = pessoa('Thiago');
-    const recTotal = meses.map((m,i) => real(m)
-      ? soma(real(m).filter(l => l.v>0).map(l=>l.v))
-      : soma(linhas.filter(r => r.tipo==='Entrada').map(r=>r.vals[i])));
-    const recOutros = recTotal.map((t,i) => t - recPaula[i] - recThiago[i]);
-
-    // Saídas por grupo
-    const saidaGrupo = g => meses.map((m,i) => real(m)
-      ? soma(real(m).filter(l => l.v<0 && l.grupo===g).map(l=>-l.v))
-      : soma(linhas.filter(r => r.tipo==='Saída' && r.grupo===g).map(r=>r.vals[i])));
-    const IGREJA = 'Igreja';
-    const ORDEM = ['Moradia','Alimentação','Educação','Transporte','Contas fixas','Saúde',
-                   'Despesas pessoais','Lazer','Reserva de emergência/metas curtas'];
-    const presentes = [...new Set(linhas.filter(r => r.tipo==='Saída').map(r => r.grupo))];
-    const resto = presentes.filter(g => g!==IGREJA && !ORDEM.includes(g)).sort((a,b)=>a.localeCompare(b,'pt-BR'));
-    const grupos = [...ORDEM, ...resto];
-    const valores = {}; [IGREJA, ...grupos].forEach(g => valores[g] = saidaGrupo(g));
-    const conhecidos = [IGREJA, ...grupos];
-    const outrosReal = meses.map(m => real(m)
-      ? soma(real(m).filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l=>-l.v)) : 0);
-    const temOutros = outrosReal.some(v => v>0);
-
-    const liquido = meses.map((_,i) => recTotal[i] - valores[IGREJA][i]);
-    const totalDesp = meses.map((_,i) => soma(grupos.map(g => valores[g][i])) + outrosReal[i]);
-    const resultado = meses.map((_,i) => liquido[i] - totalDesp[i]);
-    let ac = 0; const saldo = resultado.map(v => (ac += v));
-
-    const c = v => `<td class="${v<0?'over':''}">${v===0?'—':fmt(v)}</td>`;
-    const row = (nome, arr, cls='') => `<tr class="${cls}"><td>${nome}</td>${arr.map(c).join('')}</tr>`;
-    const neg = arr => arr.map(v => -v);
-    const head = `<thead><tr><th>Linha</th>${meses.map(m => `<th>${m}${real(m)?'<br><small>real</small>':''}</th>`).join('')}</tr></thead>`;
-    document.getElementById('fluxo-tab').innerHTML = head + '<tbody>' +
-      row('Receitas', recTotal, 'tot') +
-      row('&nbsp;&nbsp;Paula', recPaula, 'sub') +
-      row('&nbsp;&nbsp;Thiago', recThiago, 'sub') +
-      row('&nbsp;&nbsp;Outros', recOutros, 'sub') +
-      row('Dízimos e Ofertas (igreja)', neg(valores[IGREJA])) +
-      row('Resultado líquido', liquido, 'tot') +
-      grupos.map(g => row(g, neg(valores[g]))).join('') +
-      (temOutros ? row('Outros (real, grupo fora da lista)', neg(outrosReal)) : '') +
-      row('Total despesas', neg(totalDesp), 'tot') +
-      row('Resultado do mês', resultado, 'tot') +
-      row('Saldo acumulado', saldo, 'tot') + '</tbody>';
-  }
-
-  function dia(){
-    const m = selMes.value, el = document.getElementById('dia-tab');
-    const ls = (realPorMes[m]||[]).slice().sort((a,b) => a.d - b.d);
-    if (!ls.length){
-      el.innerHTML = `<p class="legend">${m} ainda é projeção (orçamento mensal, sem datas). Quando o mês fechar, os lançamentos com data entram na aba Lancamentos e aparecem aqui dia a dia.</p>`;
-      return;
-    }
-    let ac = 0;
-    el.innerHTML = '<table><thead><tr><th>Data</th><th>Descrição</th><th>Grupo</th><th>Valor</th><th>Saldo do mês</th></tr></thead><tbody>' +
-      ls.map(l => { ac += l.v; return `<tr><td>${String(l.d.getDate()).padStart(2,'0')}/${String(l.d.getMonth()+1).padStart(2,'0')}</td><td style="text-align:left">${l.desc}</td><td style="text-align:left">${l.grupo}</td><td class="${l.v<0?'over':'under'}">${fmt(l.v)}</td><td class="${ac<0?'over':''}">${fmt(ac)}</td></tr>`; }).join('') + '</tbody></table>';
-  }
-  // ---- Orçamento do mês e Orçamento x Realizado (mês em andamento) ----
-  const selOrc = document.getElementById('mes-orc');
+  // escola: valor atual (meio-período); só muda se o custo da escola mudar
+  const linhasOrc = base.filter(r => r.cen === '' || r.cen === 'meio');
+  const soma = a => a.reduce((s,v)=>s+v,0);
+  const IGREJA = 'Igreja';
+  const ORDEM = ['Moradia','Alimentação','Educação','Transporte','Contas fixas','Saúde',
+                 'Despesas pessoais','Lazer','Reserva de emergência/metas curtas'];
+  const presentes = [...new Set(linhasOrc.filter(r => r.tipo==='Saída').map(r => r.grupo))];
+  const resto = presentes.filter(g => g!==IGREJA && !ORDEM.includes(g)).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  const grupos = [...ORDEM, ...resto];
+  const conhecidos = [IGREJA, ...grupos];
   const hoje = new Date();
+
+  // agregados do orçamento de um mês (índice i)
+  function aggOrc(i){
+    const ent = f => soma(linhasOrc.filter(r => r.tipo==='Entrada' && f(r)).map(r => r.vals[i]));
+    const sai = g => soma(linhasOrc.filter(r => r.tipo==='Saída' && r.grupo===g).map(r => r.vals[i]));
+    const rec = ent(()=>true), paula = ent(r => r.linha.includes('Paula')), thiago = ent(r => r.linha.includes('Thiago'));
+    const g = {}; grupos.forEach(x => g[x] = sai(x));
+    return {rec, paula, thiago, outros: rec-paula-thiago, ig: sai(IGREJA), g, fora: 0};
+  }
+  // agregados de uma lista de lançamentos reais
+  function aggReal(ls){
+    const ent = f => soma(ls.filter(l => l.v>0 && f(l)).map(l => l.v));
+    const sub = n => l => (l.sub||'').toLowerCase()===n.toLowerCase();
+    const rec = ent(()=>true), paula = ent(sub('Paula')), thiago = ent(sub('Thiago'));
+    const g = {}; grupos.forEach(x => g[x] = soma(ls.filter(l => l.v<0 && l.grupo===x).map(l => -l.v)));
+    return {rec, paula, thiago, outros: rec-paula-thiago,
+            ig: soma(ls.filter(l => l.v<0 && l.grupo===IGREJA).map(l => -l.v)), g,
+            fora: soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v))};
+  }
+  // linhas da tabela na ordem definida; tipo: e = entrada, s = saída
+  function linhas(A, comFora){
+    const desp = soma(grupos.map(x => A.g[x])) + A.fora;
+    return [
+      ['Receitas', A.rec, 'tot', 'e'],
+      ['&nbsp;&nbsp;Paula', A.paula, 'sub', 'e'],
+      ['&nbsp;&nbsp;Thiago', A.thiago, 'sub', 'e'],
+      ['&nbsp;&nbsp;Outros', A.outros, 'sub', 'e'],
+      ['Dízimos e Ofertas (igreja)', A.ig, '', 's'],
+      ['Resultado líquido', A.rec - A.ig, 'tot', 'e'],
+      ...grupos.map(x => [x, A.g[x], '', 's']),
+      ...(comFora ? [['Outros (real, grupo fora da lista)', A.fora, '', 's']] : []),
+      ['Total despesas', desp, 'tot', 's'],
+      ['Resultado do mês', A.rec - A.ig - desp, 'tot', 'e'],
+    ];
+  }
+  const cel = v => (v===0 ? '—' : fmt(v));
+  const ruim = (t, cls, o, r) => t==='s' && (o ? r>o : r>0);
+
+  // ---------- visão do mês: Orçado | Realizado | dia 1..N ----------
+  const selOrc = document.getElementById('mes-orc');
+  const primeiroReal = meses.find(m => realPorMes[m]);
   selOrc.innerHTML = meses.map(m => `<option value="${m}">${m}${realPorMes[m]?' (com realizado)':''}</option>`).join('');
   selOrc.value = meses.includes(mesKey(hoje)) ? mesKey(hoje) : (primeiroReal || meses[0]);
-  const ORDEM2 = ['Moradia','Alimentação','Educação','Transporte','Contas fixas','Saúde',
-                  'Despesas pessoais','Lazer','Reserva de emergência/metas curtas'];
 
-  function orcamentoRealizado(){
+  function visaoMes(){
     const m = selOrc.value, i = meses.indexOf(m);
-    const cen = selCen.value;
-    const linhas = base.filter(r => r.cen === '' || r.cen === cen);
-    const soma = a => a.reduce((s,v)=>s+v,0);
-    const ls = (realPorMes[m]||[]);
-    const ultimo = ls.length ? new Date(Math.max(...ls.map(l => l.d.getTime()))) : null;
+    const ls = realPorMes[m] || [];
     const ano = 2000 + (+m.slice(4)), mi = MN.indexOf(m.slice(0,3));
     const diasMes = new Date(ano, mi+1, 0).getDate();
-    const fim = new Date(ano, mi, diasMes, 23, 59);
-    const fechado = hoje > fim;
-    const dias = fechado ? diasMes : (ultimo ? ultimo.getDate() : 0);
-    const pctMes = Math.round(dias / diasMes * 100);
-
-    const oEnt = f => soma(linhas.filter(r => r.tipo==='Entrada' && f(r)).map(r => r.vals[i]));
-    const oSai = g => soma(linhas.filter(r => r.tipo==='Saída' && r.grupo===g).map(r => r.vals[i]));
-    const rEnt = f => soma(ls.filter(l => l.v>0 && f(l)).map(l => l.v));
-    const rSai = g => soma(ls.filter(l => l.v<0 && l.grupo===g).map(l => -l.v));
-    const sub = n => l => (l.sub||'').toLowerCase()===n.toLowerCase();
-    const IGREJA = 'Igreja';
-    const presentes = [...new Set(linhas.filter(r => r.tipo==='Saída').map(r => r.grupo))];
-    const resto = presentes.filter(g => g!==IGREJA && !ORDEM2.includes(g)).sort((a,b)=>a.localeCompare(b,'pt-BR'));
-    const grupos = [...ORDEM2, ...resto];
-    const conhecidos = [IGREJA, ...grupos];
-
-    const oRec = oEnt(()=>true), rRec = rEnt(()=>true);
-    const oPaula = oEnt(r => r.linha.includes('Paula')), rPaula = rEnt(sub('Paula'));
-    const oThiago = oEnt(r => r.linha.includes('Thiago')), rThiago = rEnt(sub('Thiago'));
-    const oIg = oSai(IGREJA), rIg = rSai(IGREJA);
-    const oDesp = soma(grupos.map(oSai));
-    const rOutros = soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v));
-    const rDesp = soma(grupos.map(rSai)) + rOutros;
-
-    // tipo: 'e' = entrada (quanto mais, melhor), 's' = saída (quanto menos, melhor)
-    const L = [
-      ['Receitas', oRec, rRec, 'e', 'tot'],
-      ['&nbsp;&nbsp;Paula', oPaula, rPaula, 'e', 'sub'],
-      ['&nbsp;&nbsp;Thiago', oThiago, rThiago, 'e', 'sub'],
-      ['&nbsp;&nbsp;Outros', oRec-oPaula-oThiago, rRec-rPaula-rThiago, 'e', 'sub'],
-      ['Dízimos e Ofertas (igreja)', oIg, rIg, 's', ''],
-      ['Resultado líquido', oRec-oIg, rRec-rIg, 'e', 'tot'],
-      ...grupos.map(g => [g, oSai(g), rSai(g), 's', '']),
-      ...(rOutros>0 ? [['Outros (real, grupo fora da lista)', 0, rOutros, 's', '']] : []),
-      ['Total despesas', oDesp, rDesp, 's', 'tot'],
-      ['Resultado do mês', oRec-oIg-oDesp, rRec-rIg-rDesp, 'e', 'tot'],
-    ];
-
-    const temReal = ls.length > 0;
-    // visão geral do orçamento
-    document.getElementById('orc-tab').innerHTML =
-      '<thead><tr><th>Categoria</th><th>Orçamento</th><th>% da receita</th></tr></thead><tbody>' +
-      L.map(([n,o,,,cls]) => `<tr class="${cls}"><td>${n}</td><td class="${o<0?'over':''}">${o===0?'—':fmt(o)}</td><td>${oRec&&o&&cls!=='sub'&&n!=='Receitas'?Math.round(Math.abs(o)/oRec*100)+'%':''}</td></tr>`).join('') + '</tbody>';
-
-    // cards: como está caminhando
-    const cards = document.getElementById('mes-cards');
-    if (!temReal){
-      cards.innerHTML = `<div class="kpi"><div class="label">${m}</div><div class="value">Sem realizado</div></div>`;
-    } else {
-      const ref = fechado ? 'mês fechado' : `dados até ${String(ultimo.getDate()).padStart(2,'0')}/${String(ultimo.getMonth()+1).padStart(2,'0')} (dia ${dias} de ${diasMes})`;
-      const uso = oDesp ? Math.round(rDesp/oDesp*100) : 0;
-      cards.innerHTML = `
-        <div class="kpi"><div class="label">${m} — ${ref}</div><div class="value">${pctMes}% do mês</div></div>
-        <div class="kpi"><div class="label">Despesas realizadas</div><div class="value ${uso>pctMes?'warn':'ok'}">R$ ${fmt(rDesp)}</div></div>
-        <div class="kpi"><div class="label">Orçamento de despesas usado</div><div class="value ${uso>pctMes?'warn':'ok'}">${uso}%</div></div>
-        <div class="kpi"><div class="label">Receitas realizadas</div><div class="value">R$ ${fmt(rRec)}</div></div>`;
-    }
-
-    // orçamento x realizado
-    document.getElementById('real-tab').innerHTML =
-      '<thead><tr><th>Categoria</th><th>Orçamento</th><th>Realizado</th><th>Diferença</th><th>% usado</th></tr></thead><tbody>' +
-      L.map(([n,o,r,t,cls]) => {
-        if (!temReal) return `<tr class="${cls}"><td>${n}</td><td>${o===0?'—':fmt(o)}</td><td>—</td><td>—</td><td></td></tr>`;
-        const dif = t==='s' ? o - r : r - o;          // positivo = a favor
-        const pct = o ? Math.round(r/o*100) : null;
-        const ruim = t==='s' ? (o ? r>o : r>0) : (fechado && r<o);
-        return `<tr class="${cls}"><td>${n}</td><td>${o===0?'—':fmt(o)}</td><td>${r===0?'—':fmt(r)}</td>` +
-          `<td class="${dif<0?'over':'under'}">${dif===0?'—':fmt(dif)}</td><td class="${ruim?'over':''}">${pct===null?'':pct+'%'}</td></tr>`;
-      }).join('') + '</tbody>';
+    const fora = ls.some(l => l.v<0 && !conhecidos.includes(l.grupo));
+    const O = linhas(aggOrc(i), fora), R = linhas(aggReal(ls), fora);
+    const D = Array.from({length:diasMes}, (_,k) => linhas(aggReal(ls.filter(l => l.d.getDate()===k+1)), fora));
+    const dias = Array.from({length:diasMes}, (_,k) => {
+      const wd = ['D','S','T','Q','Q','S','S'][new Date(ano, mi, k+1).getDay()];
+      return `<th class="dia">${String(k+1).padStart(2,'0')}<br><small>${wd}</small></th>`; }).join('');
+    const head = `<thead><tr><th class="c1">Categoria</th><th class="c2">Orçado</th><th class="c3">Realizado</th>${dias}</tr></thead>`;
+    const body = O.map(([n,o,cls,t], k) => {
+      const r = R[k][1];
+      const vermelho = ruim(t, cls, o, r) ? 'over' : '';
+      const dcells = D.map(d => `<td class="dia ${d[k][1]<0?'over':''}">${cel(d[k][1])}</td>`).join('');
+      return `<tr class="${cls}"><td class="c1">${n}</td><td class="c2">${cel(o)}</td>` +
+        `<td class="c3 ${vermelho || (k===O.length-1 && r<0 ? 'over':'')}">${cel(r)}</td>${dcells}</tr>`;
+    }).join('');
+    document.getElementById('mes-tab').innerHTML = head + '<tbody>' + body + '</tbody>';
   }
-  selCen.onchange = () => { tabela(); orcamentoRealizado(); }; selMes.onchange = dia; selOrc.onchange = orcamentoRealizado;
-  tabela(); dia(); orcamentoRealizado();
+
+  // ---------- relatório geral: todos os meses, só orçado x realizado ----------
+  function geral(){
+    const cols = meses.map((m,i) => {
+      const ls = realPorMes[m];
+      const fora = !!ls && ls.some(l => l.v<0 && !conhecidos.includes(l.grupo));
+      return {m, i, tem: !!ls, fora};
+    });
+    const algumFora = cols.some(c => c.fora);
+    const O = cols.map(c => linhas(aggOrc(c.i), algumFora));
+    const R = cols.map(c => c.tem ? linhas(aggReal(realPorMes[c.m]), algumFora) : null);
+    const n = O[0].length;
+    const head1 = '<tr><th class="c1" rowspan="2">Categoria</th>' + cols.map(c =>
+      `<th colspan="${c.tem?2:1}" class="mhead">${c.m}</th>`).join('') + '</tr>';
+    const head2 = '<tr>' + cols.map(c => c.tem ? '<th>Orçado</th><th>Realizado</th>' : '<th>Orçado</th>').join('') + '</tr>';
+    const linhasHtml = O[0].map(([nome,,cls,t], k) => '<tr class="'+cls+'"><td class="c1">'+nome+'</td>' + cols.map((c,ci) => {
+      const o = O[ci][k][1];
+      let s = `<td>${cel(o)}</td>`;
+      if (c.tem){ const r = R[ci][k][1]; s += `<td class="${ruim(t,cls,o,r)?'over':''}">${cel(r)}</td>`; }
+      return s;
+    }).join('') + '</tr>');
+    // saldo acumulado (resultado do mês acumulado)
+    let ao = 0, ar = 0;
+    const saldo = '<tr class="tot"><td class="c1">Saldo acumulado</td>' + cols.map((c,ci) => {
+      ao += O[ci][n-1][1];
+      let s = `<td class="${ao<0?'over':''}">${fmt(ao)}</td>`;
+      if (c.tem){ ar += R[ci][n-1][1]; s += `<td class="${ar<0?'over':''}">${fmt(ar)}</td>`; }
+      return s;
+    }).join('') + '</tr>';
+    document.getElementById('geral-tab').innerHTML = '<thead>' + head1 + head2 + '</thead><tbody>' + linhasHtml.join('') + saldo + '</tbody>';
+  }
+  selOrc.onchange = visaoMes;
+  visaoMes(); geral();
 }
 
 function renderProjecao(wb){
