@@ -55,6 +55,7 @@
   table.orc tr.tot td{font-weight:bold}
   table.orc tr.sub td{color:var(--muted);font-size:.82rem}
   table.fluxo tr.sub td{color:var(--muted);font-size:.82rem}
+  .btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;font-size:.85rem;cursor:pointer}
   details.hist{margin:24px 0}
   details.hist summary{cursor:pointer;color:var(--muted);font-size:.9rem;margin-bottom:12px}
   table.orc2{overflow:visible;width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:.82rem}
@@ -76,7 +77,8 @@
   <p id="status">Carregando dados…</p>
 
   <div id="fluxo-wrap">
-    <h2 style="font-size:1.1rem;margin:8px 0 12px">Orçamento x Realizado no mês</h2>
+    <button id="baixar" class="btn">Baixar lançamentos já registrados (.xlsx)</button>
+    <h2 style="font-size:1.1rem;margin:12px 0 12px">Orçamento x Realizado no mês</h2>
     <label class="seletor">Mês: <select id="mes-orc"></select></label>
     <div class="wrap"><table id="mes-tab" class="orc2"></table></div>
     <p class="legend">Orçado e Realizado ficam fixos; role para a direita para ver o dia a dia. Realizado em vermelho = passou do orçamento. O realizado vem da aba Lancamentos.</p>
@@ -365,6 +367,13 @@ function renderFluxo(wb){
       pass.map(p => `<tr><td style="text-align:left">${p.mes}</td><td style="text-align:left">${p.credor}</td><td style="text-align:left">${p.desc}</td><td>${fmt(p.valor)}</td><td>${p.data||'—'}</td><td style="text-align:left;white-space:normal;min-width:220px">${p.nota||'—'}</td><td>${p.quitado?'Quitado':'Em aberto'}</td></tr>`).join('') +
       `<tr class="tot"><td colspan="3" style="text-align:left">Total em aberto</td><td>${fmt(soma(ab.map(p=>p.valor)))}</td><td colspan="3"></td></tr></tbody></table>`;
   }
+  // baixa os lançamentos já registrados (para conferir contra os extratos e evitar duplicidade)
+  document.getElementById('baixar').onclick = () => {
+    const nb = XLSX.utils.book_new();
+    if (wb.Sheets['Lancamentos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Lancamentos'], 'Lancamentos');
+    if (wb.Sheets['Passivos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Passivos'], 'Passivos');
+    XLSX.writeFile(nb, 'lancamentos_registrados.xlsx');
+  };
   selOrc.onchange = visaoMes;
   visaoMes(); geral(); blocoPassivos();
 }
