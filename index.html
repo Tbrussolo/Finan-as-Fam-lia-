@@ -78,7 +78,7 @@
   <p id="status">Carregando dados…</p>
 
   <div id="fluxo-wrap">
-    <button id="baixar" class="btn">Baixar lançamentos já registrados (.xlsx)</button>
+    <button id="baixar" class="btn">Baixar lançamentos, contas e passivos (.xlsx)</button>
     <button id="det-btn" class="btn">Abrir detalhamento</button>
     <h2 style="font-size:1.1rem;margin:16px 0 12px">Saldo das contas</h2>
     <div class="wrap" id="contas-tab"></div>
@@ -288,10 +288,10 @@ function renderFluxo(wb){
   function linhas(A, comFora){
     const desp = soma(grupos.map(x => A.g[x])) + A.fora;
     return [
-      ['Receitas', A.rec, 'tot', 'e'],
-      ['&nbsp;&nbsp;Paula', A.paula, 'sub', 'e'],
-      ['&nbsp;&nbsp;Thiago', A.thiago, 'sub', 'e'],
-      ['&nbsp;&nbsp;Outros', A.outros, 'sub', 'e'],
+      ['Receitas', A.rec, 'tot', 'e', false, 'Receitas'],
+      ['&nbsp;&nbsp;Paula', A.paula, 'sub', 'e', true, 'Receitas'],
+      ['&nbsp;&nbsp;Thiago', A.thiago, 'sub', 'e', true, 'Receitas'],
+      ['&nbsp;&nbsp;Outros', A.outros, 'sub', 'e', true, 'Receitas'],
       ['Dízimos e Ofertas (igreja)', A.ig, '', 's'],
       ['Resultado líquido', A.rec - A.ig, 'tot', 'e'],
       ...grupos.flatMap(x => {
@@ -304,13 +304,13 @@ function renderFluxo(wb){
     ];
   }
   // detalhes (parcelas e linhas de dívida) fechados por padrão; clique no grupo ou no botão para abrir
-  const abertos = new Set();
-  const gruposComDet = grupos.filter(x => DET.some(d => d.grupo===x));
+  const gruposComDet = ['Receitas', ...grupos.filter(x => DET.some(d => d.grupo===x))];
+  const abertos = new Set(['Receitas']);
   const nomeCel = (l) => (!l[4] && l[5]) ? `<span class="tg" data-g="${l[5]}">${abertos.has(l[5]) ? '▾' : '▸'} ${l[0]}</span>` : l[0];
   const oculta = l => l[4] && !abertos.has(l[5]);
   function atualizaBotao(){
     const b = document.getElementById('det-btn');
-    if (b) b.textContent = abertos.size ? 'Fechar detalhamento' : 'Abrir detalhamento';
+    if (b) b.textContent = gruposComDet.every(g => abertos.has(g)) ? 'Fechar detalhamento' : 'Abrir detalhamento';
   }
   const cel = v => (v===0 ? '—' : fmt(v));
   const ruim = (t, cls, o, r) => t==='s' && (o ? r>o : r>0);
@@ -333,7 +333,7 @@ function renderFluxo(wb){
       const wd = ['D','S','T','Q','Q','S','S'][new Date(ano, mi, k+1).getDay()];
       return `<th class="dia">${String(k+1).padStart(2,'0')}<br><small>${wd}</small></th>`; }).join('');
     const head = `<thead><tr><th class="c1">Categoria</th><th class="c2">Orçado</th><th class="c3">Realizado</th>${dias}</tr></thead>`;
-    const keep = k => !O[k][4] || O[k][1]!==0 || R[k][1]!==0 || D.some(d => d[k][1]!==0);
+    const keep = k => !O[k][4] || O[k][5]==='Receitas' || O[k][1]!==0 || R[k][1]!==0 || D.some(d => d[k][1]!==0);
     const body = O.map(([n,o,cls,t], k) => {
       if (!keep(k) || oculta(O[k])) return '';
       const r = R[k][1];
@@ -361,7 +361,7 @@ function renderFluxo(wb){
     const head1 = '<tr><th class="c1" rowspan="2">Categoria</th>' + cols.map(c =>
       `<th colspan="${c.tem?2:1}" class="mhead">${c.m}</th>`).join('') + '</tr>';
     const head2 = '<tr>' + cols.map(c => c.tem ? '<th>Orçado</th><th>Realizado</th>' : '<th>Orçado</th>').join('') + '</tr>';
-    const keepG = k => !O[0][k][4] || cols.some((c,ci) => O[ci][k][1]!==0 || (R[ci] && R[ci][k][1]!==0));
+    const keepG = k => !O[0][k][4] || O[0][k][5]==='Receitas' || cols.some((c,ci) => O[ci][k][1]!==0 || (R[ci] && R[ci][k][1]!==0));
     const linhasHtml = O[0].map(([nome,,cls,t], k) => (!keepG(k) || oculta(O[0][k])) ? '' : '<tr class="'+cls+'"><td class="c1">'+nomeCel(O[0][k])+'</td>' + cols.map((c,ci) => {
       const o = O[ci][k][1];
       let s = `<td>${cel(o)}</td>`;
@@ -422,6 +422,7 @@ function renderFluxo(wb){
   document.getElementById('baixar').onclick = () => {
     const nb = XLSX.utils.book_new();
     if (wb.Sheets['Lancamentos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Lancamentos'], 'Lancamentos');
+    if (wb.Sheets['Contas']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Contas'], 'Contas');
     if (wb.Sheets['Passivos']) XLSX.utils.book_append_sheet(nb, wb.Sheets['Passivos'], 'Passivos');
     XLSX.writeFile(nb, 'lancamentos_registrados.xlsx');
   };
@@ -432,7 +433,7 @@ function renderFluxo(wb){
     const g = t.dataset.g; abertos.has(g) ? abertos.delete(g) : abertos.add(g); refaz();
   });
   const dbtn = document.getElementById('det-btn');
-  if (dbtn) dbtn.onclick = () => { if (abertos.size) abertos.clear(); else gruposComDet.forEach(g => abertos.add(g)); refaz(); };
+  if (dbtn) dbtn.onclick = () => { if (gruposComDet.every(g => abertos.has(g))) abertos.clear(); else gruposComDet.forEach(g => abertos.add(g)); refaz(); };
   selOrc.onchange = visaoMes;
   visaoMes(); geral(); blocoPassivos(); saldoContas();
 }
