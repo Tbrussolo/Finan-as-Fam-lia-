@@ -232,7 +232,7 @@ function renderFluxo(wb){
     const li = rl.findIndex(r => r && r[0] === 'Data');
     if (li >= 0) rl.slice(li+1).forEach(r => {
       const d = parseData(r[0]); const v = typeof r[4] === 'number' ? r[4] : null;
-      if (d && v !== null) lanc.push({d, desc:r[1]||'', grupo:r[2]||'Sem grupo', sub:r[3]||'', v, conta:r[5]||'', tipo:r[6]||''});
+      if (d && v !== null) lanc.push({d, desc:r[1]||'', grupo:r[2]||'Sem grupo', sub:r[3]||'', v, conta:r[5]||'', tipo:r[6]||'', dc: parseData(r[7])});
     });
   }
   const realPorMes = {};
@@ -401,8 +401,21 @@ function renderFluxo(wb){
       obs:r[3]||'', extrato: typeof r[4]==='number' ? r[4] : null}));
     const dd = d => d ? `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` : '—';
     const nomes = contas.map(c => norm(c.nome));
-    let total = 0, pendente = false;
+    let total = 0, pendente = false, totalCart = 0, temCart = false;
     const linhasC = contas.map(c => {
+      // cartão: saldo = fatura em aberto = compras já feitas cuja fatura ainda não foi paga (data de pagamento futura) + passivo do mesmo banco
+      if (/^cart[aã]o/i.test(c.nome)){
+        temCart = true;
+        const banco = norm(c.nome).replace(/^cart[aã]o\s*/, '');
+        const fut = lanc.filter(l => norm(l.conta)===norm(c.nome) && !/movimento/i.test(l.tipo) && l.d > hoje && (!l.dc || l.dc <= hoje));
+        const fa = soma(fut.map(l => l.v));
+        const pa = soma(pass.filter(p => !p.quitado && banco && norm(p.credor).includes(banco)).map(p => p.valor));
+        const atualC = fa - pa; totalCart += atualC;
+        const dm = fut.length ? new Date(Math.min(...fut.map(l => l.d.getTime()))) : null;
+        return `<tr><td style="text-align:left">${c.nome}</td><td>—</td><td>—</td><td>${fa===0?'—':fmt(fa)}</td>` +
+          `<td class="${atualC<0?'over':''}"><b>${fmt(atualC)}</b></td><td>${dm?'vence '+dd(dm):'—'}</td>` +
+          `<td style="text-align:left;white-space:normal;min-width:240px">Fatura em aberto: compras ainda não pagas${pa?` + passivo em aberto ${fmt(pa)} (aba Passivos)`:''}. Zera quando a data de pagamento chega.</td></tr>`;
+      }
       const mov = lanc.filter(l => norm(l.conta)===norm(c.nome) && c.data && l.d > c.data && l.d <= hoje);
       const m = soma(mov.map(l => l.v));
       const ult = mov.length ? new Date(Math.max(...mov.map(l => l.d.getTime()))) : null;
@@ -415,7 +428,10 @@ function renderFluxo(wb){
     }).join('');
     const semConta = lanc.filter(l => l.conta && !nomes.includes(norm(l.conta)));
     el.innerHTML = '<table class="orc2"><thead><tr><th class="c0">Conta</th><th>Saldo inicial</th><th>Data do saldo</th><th>Movimentos depois</th><th>Saldo atual</th><th>Último lançamento</th><th class="c0">Observação</th></tr></thead><tbody>' +
-      linhasC + `<tr class="tot"><td style="text-align:left">Total${pendente?' (sem contas pendentes)':''}</td><td></td><td></td><td></td><td class="${total<0?'over':''}">${fmt(total)}</td><td></td><td></td></tr></tbody></table>` +
+      linhasC + `<tr class="tot"><td style="text-align:left">Total${pendente?' (sem contas pendentes)':''}</td><td></td><td></td><td></td><td class="${total<0?'over':''}">${fmt(total)}</td><td></td><td></td></tr>` +
+      (temCart ? `<tr class="tot"><td style="text-align:left">Total cartões (a pagar)</td><td></td><td></td><td></td><td class="${totalCart<0?'over':''}">${fmt(totalCart)}</td><td></td><td></td></tr>` +
+                 `<tr class="tot"><td style="text-align:left">Saldo líquido (contas + cartões)</td><td></td><td></td><td></td><td class="${(total+totalCart)<0?'over':''}">${fmt(total+totalCart)}</td><td></td><td></td></tr>` : '') +
+      `</tbody></table>` +
       (semConta.length ? `<p class="legend over">Atenção: ${semConta.length} lançamento(s) com conta não cadastrada na aba Contas.</p>` : '');
   }
   // baixa os lançamentos já registrados (para conferir contra os extratos e evitar duplicidade)
