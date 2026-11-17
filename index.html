@@ -275,14 +275,14 @@ function renderFluxo(wb){
   }
   // agregados de uma lista de lançamentos reais
   function aggReal(ls){
-    const ent = f => soma(ls.filter(l => l.v>0 && f(l)).map(l => l.v));
+    const ent = f => soma(ls.filter(l => l.v>0 && l.grupo==='Receitas' && f(l)).map(l => l.v));
     const sub = n => l => (l.sub||'').toLowerCase()===n.toLowerCase();
     const rec = ent(()=>true), paula = ent(sub('Paula')), thiago = ent(sub('Thiago'));
-    const g = {}; grupos.forEach(x => g[x] = soma(ls.filter(l => l.v<0 && l.grupo===x).map(l => -l.v)));
+    const g = {}; grupos.forEach(x => g[x] = soma(ls.filter(l => l.grupo===x).map(l => -l.v)));
     return {rec, paula, thiago, outros: rec-paula-thiago,
-            ig: soma(ls.filter(l => l.v<0 && l.grupo===IGREJA).map(l => -l.v)), g,
-            fora: soma(ls.filter(l => l.v<0 && !conhecidos.includes(l.grupo)).map(l => -l.v)),
-            det: DET.map(d => soma(ls.filter(l => l.v<0 && l.grupo===d.grupo && d.match(l)).map(l => -l.v)))};
+            ig: soma(ls.filter(l => l.grupo===IGREJA).map(l => -l.v)), g,
+            fora: soma(ls.filter(l => l.grupo!=='Receitas' && !conhecidos.includes(l.grupo)).map(l => -l.v)),
+            det: DET.map(d => soma(ls.filter(l => l.grupo===d.grupo && d.match(l)).map(l => -l.v)))};
   }
   // linhas da tabela na ordem definida; tipo: e = entrada, s = saída
   function linhas(A, comFora){
@@ -326,7 +326,7 @@ function renderFluxo(wb){
     const ls = realPorMes[m] || [];
     const ano = 2000 + (+m.slice(4)), mi = MN.indexOf(m.slice(0,3));
     const diasMes = new Date(ano, mi+1, 0).getDate();
-    const fora = ls.some(l => l.v<0 && !conhecidos.includes(l.grupo));
+    const fora = ls.some(l => l.grupo!=='Receitas' && !conhecidos.includes(l.grupo));
     const O = linhas(aggOrc(i), fora), R = linhas(aggReal(ls), fora);
     const D = Array.from({length:diasMes}, (_,k) => linhas(aggReal(ls.filter(l => l.d.getDate()===k+1)), fora));
     const dias = Array.from({length:diasMes}, (_,k) => {
@@ -351,7 +351,7 @@ function renderFluxo(wb){
   function geral(){
     const cols = meses.map((m,i) => {
       const ls = realPorMes[m];
-      const fora = !!ls && ls.some(l => l.v<0 && !conhecidos.includes(l.grupo));
+      const fora = !!ls && ls.some(l => l.grupo!=='Receitas' && !conhecidos.includes(l.grupo));
       return {m, i, tem: !!ls, fora};
     });
     const algumFora = cols.some(c => c.fora);
